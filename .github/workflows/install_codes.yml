@@ -26,10 +26,7 @@ jobs:
   
         # Runs a single command using the runners shell
         - name: Install yambo via conda
-          run: conda install yambo
-  
-        # Runs a set of commands using the runners shell
-        - name: two lines commands
           run: |
-            echo ciao 
-            echo ciao
+            conda config --add channels conda-forge
+            conda config --set channel_priority strict
+            conda install yambo
