@@ -30,3 +30,14 @@ jobs:
             conda config --add channels conda-forge
             conda config --set channel_priority strict
             conda install yambo
+
+        - name: Get the test files
+          run: |
+            wget https://media.yambo-code.eu/educational/tutorials/files/hBN.tar.gz
+            tar -xzvf hBN.tar.gz
+            rm hBN.tar.gz
+        
+        - name: try to run yambo init
+          run: |
+            cd hBN/YAMBO
+            /usr/share/miniconda/bin/yambo
