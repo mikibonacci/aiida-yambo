@@ -23,6 +23,9 @@ jobs:
       steps:
         # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
         - uses: actions/checkout@v3
+
+        - name: Install openmpi
+          run: sudo apt install openmpi-bin openmpi-dev openmpi-common openmpi-doc libopenmpi-dev
   
         # Runs a single command using the runners shell
         - name: Install yambo via conda
@@ -37,7 +40,7 @@ jobs:
             tar -xzvf hBN.tar.gz
             rm hBN.tar.gz
         
-        - name: try to run yambo init
+        - name: Try to run yambo init
           run: |
             cd hBN/YAMBO
             /usr/share/miniconda/bin/yambo
