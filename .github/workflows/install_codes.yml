@@ -25,14 +25,14 @@ jobs:
         - uses: actions/checkout@v3
 
         - name: Install openmpi
-          run: sudo apt install openmpi-bin openmpi-dev openmpi-common openmpi-doc libopenmpi-dev
+          run: |
+           conda config --add channels conda-forge
+           conda config --set channel_priority strict
+           conda install openmpi
   
         # Runs a single command using the runners shell
         - name: Install yambo via conda
-          run: |
-            conda config --add channels conda-forge
-            conda config --set channel_priority strict
-            conda install yambo
+          run: conda install yambo
 
         - name: Get the test files
           run: |
