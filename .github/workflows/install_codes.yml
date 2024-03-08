@@ -44,6 +44,9 @@ jobs:
         - name: Try to run yambo init
           run: |
             cd hBN/YAMBO
+            which yambo
+            ls 
+            ls /usr/share/miniconda/bin
             /usr/share/miniconda/bin/yambo
 
         - name: Check yambo r_setup is generated
