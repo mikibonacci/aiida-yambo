@@ -45,3 +45,15 @@ jobs:
           run: |
             cd hBN/YAMBO
             /usr/share/miniconda/bin/yambo
+
+        - name: Check yambo r_setup is generated
+          id: check_files
+          uses: andstor/file-existence-action@v3
+          with:
+            files: "r_setup"
+            fail: true 
+
+        - name: r_setup exists
+          if: steps.check_files.outputs.files_exists == 'true'
+          # Only runs if the r_setup exists
+          run: echo r_setup generated.
