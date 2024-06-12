@@ -16,7 +16,7 @@ You should clone the [tutorials-aiida-yambo](https://github.com/mikibonacci/tuto
 
 !!! info
 
-    You can also download [this](https://quantum-mobile.readthedocs.io/en/latest/releases/versions/23.04.03.html) version of the Quantum Mobile (QM) and follow the instructions contrained in `tutorials-aiida-yambo/Quantum_mobile_settings/setup_for_the_tutorial.md`, to adapt the QM to work with the following tutorials.
+    You can also download [this](https://quantum-mobile.readthedocs.io/en/latest/releases/versions/23.04.03.html) version of the Quantum Mobile (QM) and follow the instructions contained in `tutorials-aiida-yambo/Quantum_mobile_settings/setup_for_the_tutorial.md`, to adapt the QM to work with the following tutorials.
 
 - AiiDA and aiida-quantumespresso: Ground state properties: 
     - [AiiDA prerequisite](https://nbviewer.org/github/mikibonacci/tutorials-aiida-yambo/blob/main/prerequisites/0_1_structure_and_pseudos.ipynb): how to set up structures, pseudopotentials and groups in AiiDA;

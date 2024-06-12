@@ -27,6 +27,11 @@ quasiparticle (G0W0, COSHEX and HFlevel)
 and optical properties (IP-RPA and BSE) simulations, 
 as well as interfaces with different codes (e.g., Quantum ESPRESSO and Wannier90).
 
+[Go to the installation guide](user_guide/installation/index.md){ .md-button }
+
+[Go to user guide & tutorials](user_guide/index.md){ .md-button }
+
+
 ::::{grid} 1 2 2 2
 :gutter: 3
 
@@ -74,9 +79,9 @@ To the user guide and tutorials
 
 If you use this package for your research, please cite the following works:
 
-> M. Bonacci, J. Qiao , N. Spallanzani, A. Marrazzo, G. Pizzi, E. Molinari, D. Varsano, A. Ferretti, D. Prezzi, [*Towards high-throughput many-body perturbation theory: efficient algorithms and automated workflows*](https://www.nature.com/articles/s41524-023-01027-2), npj Computational Materials, **9**, 74 (2023).
+> M. Bonacci, J. Qiao , N. Spallanzani, A. Marrazzo, G. Pizzi, E. Molinari, D. Varsano, A. Ferretti, D. Prezzi, [*Towards high-throughput many-body perturbation theory: efficient algorithms and automated workflows*](https://www.nature.com/articles/s41524-023-01027-2), npj Computational Materials **9**, 74 (2023).
 
-> D. Sangalli, A. Ferretti, H. Miranda, C. Attaccalite, I. Marri, E. Cannuccia, P. Melo, M. Marsili, F. Paleari, A. Marrazzo, G. Prandini, P. Bonfà, M.O. Atambo, F. Affinito, M. Palummo, A. Molina-Sánchez, C. Hogan, M. Grüning, D. Varsano, A. Marini, [*Many-body perturbation theory calculations using the yambo code*](https://doi.org/10.1088/1361-648X/ab15d0), J. Phys. Condens. Matter, **31**, 325902 (2019).
+> D. Sangalli, A. Ferretti, H. Miranda, C. Attaccalite, I. Marri, E. Cannuccia, P. Melo, M. Marsili, F. Paleari, A. Marrazzo, G. Prandini, P. Bonfà, M.O. Atambo, F. Affinito, M. Palummo, A. Molina-Sánchez, C. Hogan, M. Grüning, D. Varsano, A. Marini, [*Many-body perturbation theory calculations using the yambo code*](https://doi.org/10.1088/1361-648X/ab15d0), J. Phys. Condens. Matter **31**, 325902 (2019).
 
 > S. P. Huber, S. Zoupanos, M. Uhrin, L. Talirz, L. Kahle, R. H ̈auselmann, D. Gresch, T. M ̈uller, A. V. Yakutovich, C. W. Andersen, F. F. Ramirez, C. S. Adorf, F. Gargiulo, S. Kumbhar, E. Passaro, C. Johnston, A. Merkys, A. Cepellotti, N. Mounet, N. Marzari, B. Kozinsky, and G. Pizzi, [*AiiDA 1.0, a scalable computational infrastructure for automated reproducible workflows and data provenance*](https://www.nature.com/articles/s41597-020-00638-4), Sci. Data **7**, 300 (2020).
 
