@@ -363,8 +363,6 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
         :return: a process builder instance with all inputs defined ready for launch.
         """
-        from aiida_quantumespresso.workflows.protocols.utils import recursive_merge
-
         if isinstance(code, str):
             
             preprocessing_code = orm.load_code(preprocessing_code)
@@ -401,8 +399,12 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             overrides_yres['nelectrons'] = nelectrons
             overrides_yres['PW_cutoff'] = PW_cutoff
 
-        #pseudo_family = inputs.pop('pseudo_family',None)
+        if pseudo_family:
+            overrides_scf['pseudo_family'] = pseudo_family
+            overrides_nscf['pseudo_family'] = pseudo_family
+                    
         #########SCF and NSCF PROTOCOLS 
+        
         builder.scf = PwBaseWorkChain.get_builder_from_protocol(
                 pw_code,
                 structure,
@@ -411,7 +413,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 electronic_type=electronic_type,
                 spin_type=spin_type,
                 initial_magnetic_moments=initial_magnetic_moments,
-                #pseudo_family=pseudo_family,
+                pseudo_family=pseudo_family,
                 )
 
         builder.nscf = PwBaseWorkChain.get_builder_from_protocol(
@@ -422,7 +424,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 electronic_type=electronic_type,
                 spin_type=spin_type,
                 initial_magnetic_moments=initial_magnetic_moments,
-                #pseudo_family=pseudo_family,
+                pseudo_family=pseudo_family,
                 )
 
         molecule = False
@@ -508,11 +510,12 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         builder.nscf['pw']['parameters'] = Dict(parameters_nscf)
         builder.scf['pw']['parameters'] = Dict(parameters_scf)
 
-        if pseudo_family:
+        """if pseudo_family:
             family = orm.load_group(pseudo_family)
             #builder.<sublevels_up_to .pw>.pseudos = family.get_pseudos(structure=structure) 
             builder.scf['pw']['pseudos'] = family.get_pseudos(structure=structure) 
-            builder.nscf['pw']['pseudos'] = family.get_pseudos(structure=structure) 
+            builder.nscf['pw']['pseudos'] = family.get_pseudos(structure=structure) and
+        """
 
 
         print('\nkpoint mesh for nscf: {}'.format(builder.nscf['kpoints'].get_kpoints_mesh()[0]))
