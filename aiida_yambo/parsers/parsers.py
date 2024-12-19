@@ -178,7 +178,6 @@ class YamboParser(Parser):
                 temp_file = pathlib.Path(dirpath) / filename
                 with retrieved.open(filename, 'rb') as handle:
                     temp_file.write_bytes(handle.read())
-                os.system(f"cp {temp_file} /home/aiida/data/work/prova_ypy/{filename}")
 
             if 'ns.db1' in os.listdir(dirpath):
                 output_params['ns_db1_path'] = dirpath
@@ -309,7 +308,7 @@ class YamboParser(Parser):
 
     def _aiida_array_bse(self, data):
         arraydata = ArrayData()
-        full = data.pop('0')
+        full = data.pop(list(data.keys())[0])
         for i in data.keys():
             for k in full.keys():
                 full[k].append(data[i][k][0])
