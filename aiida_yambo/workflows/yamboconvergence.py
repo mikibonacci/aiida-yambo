@@ -139,6 +139,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         overrides_ywfl = overrides.pop('ywfl',{})
 
         overrides_ywfl['clean_workdir'] = overrides_ywfl.pop('clean_workdir',False)
+        
 
         #########YWFL PROTOCOLS 
         ywfl_builder = YamboWorkflow.get_builder_from_protocol(

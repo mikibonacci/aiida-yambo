@@ -324,7 +324,7 @@ class YamboParser(Parser):
     
     def _aiida_optics_array(self, data):
         arraydata = ArrayData()
-        full = data.pop('0')
+        full = data.pop(list(data.keys())[0])
         for i in data.keys():
             for k in full.keys():
                 full[k] += data[i][k]

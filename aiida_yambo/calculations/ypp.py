@@ -278,9 +278,7 @@ class YppCalculation(CalcJob):
             params_dict['variables']['Actions_and_names'] = [list_of_dbs,'']
             
         y = YamboIn().from_dictionary(params_dict)
-
         input_filename = tempfolder.get_abs_path(self.metadata.options.input_filename)
-
         y.write(input_filename, prefix=self.metadata.options.logostring)
         
 
