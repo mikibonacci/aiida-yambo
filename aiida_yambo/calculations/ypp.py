@@ -334,6 +334,12 @@ class YppCalculation(CalcJob):
             calcinfo.retrieve_list.append('SAVE/ndb.QP_merged*')
             calcinfo.retrieve_list.append('aiida.out/ndb.QP_merged*')
         
+        sort_excitons = False
+        if 'excitons' in params_dict['arguments']:
+            sort_excitons = settings.pop('SORT_EXCITONS', False)
+            if sort_excitons:
+                calcinfo.retrieve_list.append('*sorted*')
+        
         additional = settings.pop('ADDITIONAL_RETRIEVE_LIST',[])
         if additional:
             extra_retrieved.append(additional)
@@ -351,6 +357,9 @@ class YppCalculation(CalcJob):
             "-F", self.metadata.options.input_filename, \
             '-J', self.metadata.options.output_filename, \
         ]
+
+        if sort_excitons:
+            c.cmdline_params = ['-e', 's'] + c.cmdline_params
 
         c.code_uuid = main_code.uuid
 
