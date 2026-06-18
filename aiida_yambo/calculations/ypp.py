@@ -9,8 +9,6 @@ import six
 
 from aiida.engine import CalcJob
 
-from aiida_quantumespresso.calculations import _lowercase_dict, _uppercase_dict
-
 from aiida.common.datastructures import CalcInfo
 from aiida.common.datastructures import CalcJobState
 from aiida.common.exceptions import UniquenessError, InputValidationError, ValidationError
