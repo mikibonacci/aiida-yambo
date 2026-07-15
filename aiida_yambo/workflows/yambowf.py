@@ -5,8 +5,6 @@ import os
 import time
 
 from aiida import orm
-from aiida.orm import RemoteData,BandsData
-from aiida.orm import Dict,Int,List,Bool
 from ase import units
 
 from aiida.engine import WorkChain, while_, if_
@@ -32,6 +30,9 @@ LegacyUpfData = DataFactory('core.upf')
 SingleFileData = DataFactory('core.singlefile')
 
 from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
+
+#### IMPORT THE NEW BASEMODEL MANAGER FOR INPUTS ####
+from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
 
 def clean(node):
     cleaned_calcs = []
@@ -74,7 +75,7 @@ def sanity_check_QP(v,c,input_db,output_db,create=True):
     return output_db,fit_v,fit_c
 
 @calcfunction
-def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_db=List([])): #just to have something that works, but it is not correct to proceed this way
+def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_db=orm.List([])): #just to have something that works, but it is not correct to proceed this way
         ywfl = load_node(ywfl_pk.value)
         pw = find_pw_parent(ywfl)
         fermi = pw.outputs.output_parameters.get_dict()['fermi_energy']
@@ -169,8 +170,6 @@ def extend_QP(filenames_List,output_name,ywfl_pk,qp_settings,QP): #just to have 
             
             QP_db_extended = SingleFileData(str(output_name).replace('fixed','extended'))
             return QP_db_extended
-
-
 
 def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1):
     fermi = find_pw_parent(ywfl).outputs.output_parameters.get_dict()['fermi_energy']
@@ -299,59 +298,64 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         super(YamboWorkflow, cls).define(spec)
 
         spec.expose_inputs(PwBaseWorkChain, namespace='scf', namespace_options={'required': False,'populate_defaults': False}, 
-                            exclude = ['parent_folder'])
+                            exclude = ['pw.parent_folder'])
 
         spec.expose_inputs(PwBaseWorkChain, namespace='nscf', namespace_options={'required': False,'populate_defaults': False},
-                            exclude = ['parent_folder'])
+                            exclude = ['pw.parent_folder'])
 
-        spec.expose_inputs(YamboRestart, namespace='yres', namespace_options={'required': False,'populate_defaults': False}, 
+        #spec.expose_inputs(YamboRestart, namespace='yres', namespace_options={'required': False,'populate_defaults': False}, 
+        #                    exclude = ['parent_folder'])
+        
+        spec.expose_inputs(YamboRestart, namespace='qp', namespace_options={'required': False,'populate_defaults': False, 'help': 'QP inputs only if BSE@GW is asked, i.e. we also provide `QP_subsets_dict`'}, 
                             exclude = ['parent_folder'])
-
-        spec.expose_inputs(YamboRestart, namespace='qp', namespace_options={'required': False,'populate_defaults': False}, 
+        
+        spec.expose_inputs(YamboRestart, namespace='bse', namespace_options={'required': False,'populate_defaults': False, 'help': 'QP inputs only if BSE@GW is asked, i.e. we also provide `QP_subsets_dict`'}, 
                             exclude = ['parent_folder'])
-
-        spec.input("additional_parsing", valid_type=List, required = False,
+        
+        spec.input("additional_parsing", valid_type=orm.List, required = False,
                     help = 'list of additional quantities to be parsed: gap, homo, lumo, or used defined quantities -with names-[k1,k2,b1,b2], [k1,b1], gap_GG, lowest_exciton')
         
-        spec.input("QP_subset_dict", valid_type=Dict, required = False,
+        spec.input("QP_subsets_dict", valid_type=orm.Dict, required = False,
                     help = 'subset of QP that you want to compute, useful if you need to obtain a large number of QP corrections')
 
-        spec.input("parent_folder", valid_type=RemoteData, required = False,
+        spec.input("parent_folder", valid_type=orm.RemoteData, required = False,
                     help = 'scf, nscf or yambo remote folder')
         
-        spec.input("clean_failed", valid_type=Bool, default=lambda: Bool(False))
+        spec.input("clean_failed", valid_type=orm.Bool, default=lambda: orm.Bool(False))
 
-        spec.input("already_computed_QP_db", valid_type=List, required=False,
+        spec.input("already_computed_QP_db", valid_type=orm.List, required=False,
                    help="list of qp db pks already computed, so we don't need to compute all the QP in QP splitter")
   
 
 ##################################### OUTLINE ####################################
 
-        spec.outline(cls.validate_parameters,
-                    cls.start_workflow,
-                    while_(cls.can_continue)(
-                           cls.perform_next,
-                    ),
-                    if_(cls.post_processing_needed)(
-                        cls.run_post_process,
-                    ),
-                    if_(cls.should_run_bse)(
-                        cls.prepare_and_run_bse,
-                    ),
-                    cls.report_wf,)
+        spec.outline(
+            #cls.validate_parameters,
+            cls.setup,
+            while_(cls.can_continue)(
+                    cls.perform_next,
+            ),
+            if_(cls.post_processing_needed)(
+                cls.run_post_process,
+            ),
+            if_(cls.should_run_bse)(
+                cls.prepare_and_run_bse,
+            ),
+            cls.report_wf,
+        )
 
 ##################################################################################
 
         spec.expose_outputs(YamboRestart)
         
-        spec.output('output_ywfl_parameters', valid_type = Dict, required = False)
-        spec.output('nscf_mapping', valid_type = Dict, required = False)
+        spec.output('output_ywfl_parameters', valid_type = orm.Dict, required = False)
+        spec.output('nscf_mapping', valid_type = orm.Dict, required = False)
 
-        spec.output('splitted_QP_calculations', valid_type = List, required = False)
+        spec.output('splitted_QP_calculations', valid_type = orm.List, required = False)
         spec.output('merged_QP', valid_type = SingleFileData, required = False)
         spec.output('extended_QP', valid_type = SingleFileData, required = False)
         
-        spec.output('scissor', valid_type = List, required = False)
+        spec.output('scissor', valid_type = orm.List, required = False)
 
         spec.exit_code(300, 'ERROR_WORKCHAIN_FAILED',
                              message='The workchain failed with an unrecoverable error.')
@@ -369,9 +373,9 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
     @classmethod
     def get_builder_from_protocol(
         cls,
-        pw_code,
-        preprocessing_code,
-        code,
+        pw_code: orm.Code,
+        preprocessing_code: orm.Code,
+        code: orm.Code,
         protocol_qe='moderate',
         protocol='moderate',
         calc_type='gw',
@@ -381,10 +385,11 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         NLCC=False,
         RIM_v=False,
         RIM_W=False,
-        electronic_type=ElectronicType.METAL,
+        electronic_type=ElectronicType.INSULATOR,
         spin_type=SpinType.NONE,
         initial_magnetic_moments=None,
         pseudo_family = None,
+        force_symmorphic = True,
         **_
     ):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
@@ -400,10 +405,6 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
         if spin_type not in [SpinType.NONE, SpinType.COLLINEAR]:
             raise NotImplementedError(f'spin type `{spin_type}` is not supported.')
-
-        inputs = cls.get_protocol_inputs(protocol, overrides={})
-
-        meta_parameters = inputs.pop('meta_parameters',{})
         
         builder = cls.get_builder()
 
@@ -413,26 +414,23 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
         for override in [overrides_scf,overrides_nscf]:
             override['clean_workdir'] = override.pop('clean_workdir',False) #required to have a valid parent folder
-            
-            #if 'pseudo_family' in override.keys():
-            #    if 'PseudoDojo' in override['pseudo_family']: NLCC = True
-
-        try:
-            pw_parent = find_pw_parent(take_calc_from_remote(parent_folder))
-            PW_cutoff = pw_parent.inputs.parameters.get_dict()['SYSTEM']['ecutwfc']
-            nelectrons = int(pw_parent.outputs.output_parameters.get_dict()['number_of_electrons'])
-        except:
-            nelectrons, PW_cutoff = periodical(structure.get_ase())
-            overrides_yres['nelectrons'] = nelectrons
-            overrides_yres['PW_cutoff'] = PW_cutoff
 
         if pseudo_family:
             overrides_scf['pseudo_family'] = pseudo_family
             overrides_nscf['pseudo_family'] = pseudo_family
                     
-        #########SCF and NSCF PROTOCOLS 
+        ######### SCF and NSCF INPUTS/PROTOCOLS #########
         
-        builder.scf = PwBaseWorkChain.get_builder_from_protocol(
+        # try to get the pw builders from the scf and nscf parents if any
+        if parent_folder is not None:
+            from aiida_yambo.utils.common_helpers import get_pw_inputs_builders
+            builder_scf, builder_nscf = get_pw_inputs_builders(parent_folder)
+            builder.parent_folder = parent_folder
+            
+        if builder_scf:
+            builder.scf = builder_scf
+        else:
+            builder.scf = PwBaseWorkChain.get_builder_from_protocol(
                 pw_code,
                 structure,
                 protocol=protocol_qe,
@@ -441,9 +439,12 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 spin_type=spin_type,
                 initial_magnetic_moments=initial_magnetic_moments,
                 pseudo_family=pseudo_family,
-                )
+            )
 
-        builder.nscf = PwBaseWorkChain.get_builder_from_protocol(
+        if builder_nscf:
+            builder.nscf = builder_nscf
+        else:
+            builder.nscf = PwBaseWorkChain.get_builder_from_protocol(
                 pw_code,
                 structure,
                 protocol=protocol_qe,
@@ -452,44 +453,22 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 spin_type=spin_type,
                 initial_magnetic_moments=initial_magnetic_moments,
                 pseudo_family=pseudo_family,
-                )
-
-        molecule = False
-        if protocol == 'molecule' or structure.pbc.count(True)==0: molecule=True
-
-        builder.nscf['kpoints'] = KpointsData()
-        builder.nscf['kpoints'].set_cell_from_structure(builder.scf['pw']['structure'])
-        if not molecule:
-            builder.nscf['kpoints'].set_kpoints_mesh_from_density(meta_parameters['k_density'],force_parity=True)
-        else:
-            builder.scf['kpoints'].set_kpoints_mesh([1,1,1])
-            builder.nscf['kpoints'].set_kpoints_mesh([1,1,1])
-            builder.scf['pw']['settings'] = Dict({'gamma_only':True})
-            builder.nscf['pw']['settings'] = Dict({'gamma_only':True})
-
-
-        builder.scf['pw']['parameters']['SYSTEM']['force_symmorphic'] = True #required in yambo
-        builder.nscf['pw']['parameters']['SYSTEM']['force_symmorphic'] = True #required in yambo
+            )
         
         nelectrons = 0
         for site in builder.nscf['pw']['structure'].sites:
             nelectrons += builder.nscf['pw']['pseudos'][site.kind_name].z_valence
+        ecutwfc = builder.nscf['pw']['parameters'].get_dict()['SYSTEM']['ecutwfc']
+
+        #########  YAMBO PROTOCOL, with or without parent folder #########
         
-        overrides_yres['nelectrons'] = nelectrons
-        overrides_yres['PW_cutoff'] = builder.nscf['pw']['parameters'].get_dict()['SYSTEM']['ecutwfc']
-
-        #########YAMBO PROTOCOL, with or without parent folder.
-        if not parent_folder: 
-            parent_folder = 'YWFL_scratch'
-        else:
-            builder.parent_folder = parent_folder
-            parent_folder = 'YWFL_super_parent'
-
-
+        #### AAA: for now, the BSE post GW (all done here) should run setting manually the inputs bse.
+        
         if calc_type=='bse':
             protocol_ = 'bse_'+protocol
         else:
             protocol_ = protocol
+            
         yres_builder = YamboRestart.get_builder_from_protocol(
                 preprocessing_code=preprocessing_code,
                 code=code,
@@ -499,228 +478,187 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 NLCC=NLCC,
                 RIM_v=RIM_v,
                 RIM_W=RIM_W,
+                nelectrons=nelectrons,
+                ecutwfc=ecutwfc
             )
 
         builder.yres = yres_builder
 
-        if 'BndsRnXp' in builder.yres['yambo']['parameters'].get_dict()['variables'].keys():
-            yambo_bandsX = builder.yres['yambo']['parameters'].get_dict()['variables']['BndsRnXp'][0][-1]
-        else: 
-            yambo_bandsX = 0 
+        # initialization of the YamboInputManager object
+        nested_inputs = YamboInputManager.get_nested_inputs(builder,what='YamboWorkflow', mode='builder')
+        input_manager = YamboInputManager(**nested_inputs)
+                
+        # setting the ecutrho in case it was not correct. In the end, we always have NC:
+        input_manager.scf.set_pw_parameter(namelist='SYSTEM', key='ecutrho', value=4*input_manager.ecutwfc)
+        input_manager.nscf.set_pw_parameter(namelist='SYSTEM', key='ecutrho', value=4*input_manager.ecutwfc)
         
-        if 'BndsRnXs' in builder.yres['yambo']['parameters'].get_dict()['variables'].keys():
-            yambo_bandsXs = builder.yres['yambo']['parameters'].get_dict()['variables']['BndsRnXs'][0][-1]
-        else: 
-            yambo_bandsXs = 0 
+        # setting force_symmorphic
+        if force_symmorphic:
+            input_manager.scf.set_pw_parameter(namelist='SYSTEM', key='force_symmorphic', value=True)
+            input_manager.nscf.set_pw_parameter(namelist='SYSTEM', key='force_symmorphic', value=True)
         
-        if 'GbndRnge' in builder.yres['yambo']['parameters'].get_dict()['variables'].keys():
-            yambo_bandsSc = builder.yres['yambo']['parameters'].get_dict()['variables']['GbndRnge'][0][-1]
-        else: 
-            yambo_bandsSc = 0 
+        # setting Gamma only if molecule:
+        molecule = False
+        if protocol == 'molecule' or structure.pbc.count(True)==0: molecule=True
+        if molecule:
+            input_manager.set_gamma_only()
+            
+        # setting `nscf` and `wf_collect`:
+        input_manager.nscf.set_pw_parameter(namelist='CONTROL', key='calculation', value='nscf')
+        input_manager.nscf.set_pw_parameter(namelist='CONTROL', key='wf_collect', value=True)
         
-        gwbands = max(yambo_bandsX,yambo_bandsSc,yambo_bandsXs)
+        #safety measure, for some system creates chaos in conjunction with smearing
+        input_manager.scf.parameters['SYSTEM'].pop('nbnd',0)
 
-        parameters_scf = builder.scf['pw']['parameters'].get_dict()
-        parameters_nscf = builder.nscf['pw']['parameters'].get_dict()
+        new_builder = input_manager.populate_builder(builder)
         
-
-        parameters_scf['SYSTEM']['ecutrho'] = max(parameters_scf['SYSTEM'].pop('ecutrho',0),4*parameters_scf['SYSTEM']['ecutwfc'])
+        return new_builder
         
-        parameters_nscf['SYSTEM']['ecutwfc'] = parameters_scf['SYSTEM']['ecutwfc']
-        parameters_nscf['SYSTEM']['ecutrho'] = parameters_scf['SYSTEM']['ecutrho']        
-        
-        parameters_nscf['CONTROL']['calculation'] = 'nscf'
-        parameters_scf['SYSTEM'].pop('nbnd',0) #safety measure, for some system creates chaos in conjunction with smearing
-
-
-        parameters_nscf['SYSTEM']['nbnd'] = int(max(parameters_nscf['SYSTEM'].pop('nbnd',0),gwbands))
-        builder.nscf['pw']['parameters'] = Dict(parameters_nscf)
-        builder.scf['pw']['parameters'] = Dict(parameters_scf)
-
-        """if pseudo_family:
-            family = orm.load_group(pseudo_family)
-            #builder.<sublevels_up_to .pw>.pseudos = family.get_pseudos(structure=structure) 
-            builder.scf['pw']['pseudos'] = family.get_pseudos(structure=structure) 
-            builder.nscf['pw']['pseudos'] = family.get_pseudos(structure=structure) and
-        """
-
-
-        print('\nkpoint mesh for nscf: {}'.format(builder.nscf['kpoints'].get_kpoints_mesh()[0]))
-
-        return builder
-
-
-    def validate_parameters(self):
-
-        if hasattr(self.inputs, 'qp'):
-            self.ctx.yambo_inputs = self.exposed_inputs(YamboRestart, 'qp')
-        else:
-            self.ctx.yambo_inputs = self.exposed_inputs(YamboRestart, 'yres')        
-        #quantumespresso common inputs
-        self.ctx.scf_inputs = self.exposed_inputs(PwBaseWorkChain, 'scf')
-        self.ctx.nscf_inputs = self.exposed_inputs(PwBaseWorkChain, 'nscf')
-        
-        #quantumespresso input parameters check from parents, if any.
-        scf_params, nscf_params, redo_nscf, gwbands, messages = quantumespresso_input_validator(self.inputs,)
-        if scf_params: self.ctx.scf_inputs.pw.parameters = scf_params
-        if nscf_params: self.ctx.nscf_inputs.pw.parameters = nscf_params
-        self.ctx.redo_nscf = redo_nscf
-        self.ctx.gwbands = gwbands
-        #for i in messages:
-            #self.report(i)
-
-        if hasattr(self.inputs,'QP_subset_dict'): self.ctx.QP_subsets = self.inputs.QP_subset_dict.get_dict()
-        
-    def start_workflow(self):
+    def setup(self):
         """Initialize the workflow, set the parent calculation
 
         This function sets the parent, and its type
         there is no submission done here, only setting up the neccessary inputs the workchain needs in the next
         steps to decide what are the subsequent steps"""
-        try:
-
-            parent = take_calc_from_remote(self.inputs.parent_folder,level=-1)
-            
-
+        
+        self.ctx.all_calcs_to_do = ['scf', 'nscf', 'yambo', 'QP splitter', 'bse']
+    
+        input_manager = YamboInputManager.get_nested_inputs(
+            self.inputs, what='YamboWorkflow', mode='builder'
+        )
+        self.ctx.input_manager = YamboInputManager(**input_manager)
+        
+        self.ctx.should_run_QP = False
+        self.ctx.should_run_bse = False
+                       
+        # we switch the yres <---> qp inputs so first we do QP, and then yres (which is BSE in this specific case).
+        if len(self.ctx.input_manager.qp.parameters) > 0 and len(self.ctx.input_manager.QP_subsets_dict) > 0 and not self.ctx.input_manager.yres.settings.get('INITIALISE', False):
+            self.ctx.should_run_bse = True if self.ctx.input_manager.qp.parameters.get('variables', None) else False
+            self.ctx.should_run_QP = self.ctx.should_run_bse
+        elif len(self.ctx.input_manager.qp.parameters) == 0 and len(self.ctx.input_manager.QP_subsets_dict) > 0 and not self.ctx.input_manager.yres.settings.get('INITIALISE', False): 
+            self.ctx.should_run_QP = True
+        
+        if not hasattr(self.ctx.input_manager, 'parent_folder'):
+            self.report('No parent folder, we start from scratch.')
+            self.ctx.calc_to_do = 'scf'
+        elif self.ctx.input_manager.parent_folder is None:
+            self.report('No parent folder, we start from scratch.')
+            self.ctx.calc_to_do = 'scf'
+        else:
+            parent = take_calc_from_remote(self.ctx.input_manager.parent_folder,level=-1)
+            # we get the PwCalculation
             if parent.process_type=='aiida.workflows:quantumespresso.pw.base':
                 parent = parent.outputs.remote_folder.creator
             
-            if parent.outputs.remote_folder.is_empty: 
-                for i in range(2):
-                    try:
-                        parent = find_pw_parent(parent)
-                        if parent.outputs.remote_folder.is_empty and i == 1: continue
-                    except:
-                        break
-                    
-            if parent.outputs.remote_folder.is_empty: raise
+            # empty parent, we need to recompute it.
+            if parent.outputs.remote_folder.is_empty:
+                self.report('The parent remote folder is empty, we start from scratch.')
+                self.ctx.calc_to_do = 'scf'
 
-            if parent.process_type=='aiida.calculations:quantumespresso.pw':
-
-                if parent.inputs.parameters.get_dict()['CONTROL']['calculation'] == 'scf' or parent.inputs.parameters.get_dict()['CONTROL']['calculation'] == 'relax' or \
-                parent.inputs.parameters.get_dict()['CONTROL']['calculation'] == 'vc-relax':
+            # pw parent
+            if 'quantumespresso.pw' in parent.process_type:
+                parent_params = parent.inputs.parameters.get_dict()
+                calc_type = parent_params['CONTROL']['calculation']
+                if calc_type in ['scf','relax','vc-relax']:
                     self.ctx.calc_to_do = 'nscf'
-                    self.ctx.redo_nscf = False
+                elif calc_type in ['nscf']:
+                    self.ctx.calc_to_do = 'yambo'
 
-                elif parent.inputs.parameters.get_dict()['CONTROL']['calculation'] == 'nscf':
-                    if self.ctx.redo_nscf or parent.inputs.parameters.get_dict()['SYSTEM']['nbnd'] < self.ctx.gwbands:
-                        parent = find_pw_parent(parent, calc_type = ['scf'])
-                        self.report('Recomputing NSCF step, not enough bands. Starting from scf at pk < {} >'.format(parent.pk))
-                        self.ctx.calc_to_do = 'nscf'
-                        self.ctx.redo_nscf = False
-                    else:
-                        self.ctx.calc_to_do = 'yambo'
-
-            elif parent.process_type=='aiida.workflows:yambo.yambo.yambowf':
-                    parent=parent.outputs.remote_folder.creator
-                    self.report('parent is: {}'.format(parent.process_type))
-                    nbnd = find_pw_parent(parent, calc_type = ['nscf']).inputs.parameters.get_dict()['SYSTEM']['nbnd']
-                    if self.ctx.redo_nscf or nbnd < self.ctx.gwbands:
-                        parent = find_pw_parent(parent, calc_type = ['scf'])
-                        self.report('Recomputing NSCF step, not enough bands. Starting from scf at pk < {} >'.format(parent.pk))
-                        self.ctx.calc_to_do = 'nscf'
-                        self.ctx.redo_nscf = False
-                    else:
-                        self.ctx.calc_to_do = 'yambo'
-
-                    if self.ctx.calc_to_do == 'yambo' and hasattr(self.inputs,'QP_subset_dict'): self.ctx.calc_to_do = 'QP splitter'
-
+            # yambo parent
             elif parent.process_type=='aiida.calculations:yambo.yambo':
-                    nbnd = find_pw_parent(parent, calc_type = ['nscf']).inputs.parameters.get_dict()['SYSTEM']['nbnd']
-                    if self.ctx.redo_nscf or nbnd < self.ctx.gwbands:
-                        parent = find_pw_parent(parent, calc_type = ['scf'])
-                        self.report('Recomputing NSCF step, not enough bands. Starting from scf at pk < {} >'.format(parent.pk))
-                        self.ctx.calc_to_do = 'nscf'
-                        self.ctx.redo_nscf = False
-                    else:
-                        self.ctx.calc_to_do = 'yambo'
-                    
-                    if self.ctx.calc_to_do == 'yambo' and hasattr(self.inputs,'QP_subset_dict'): self.ctx.calc_to_do = 'QP splitter'
-
+                self.ctx.calc_to_do = 'yambo'
+                if len(self.ctx.input_manager.QP_subsets_dict)>0: self.ctx.calc_to_do = 'QP splitter'
             else:
-                self.ctx.previous_pw = False
                 self.ctx.calc_to_do = 'scf'
                 self.report('no valid input calculations, so we will start from scratch')
             
             self.ctx.calc = parent
-
-        except Exception as e:
-
-            self.report('no valid parent pw/yambo calculation found, we will start from scratch')
-            self.ctx.calc_to_do = 'scf'
-
+            
+        # check nbnd is fine:
+        if not self.ctx.input_manager.has_enough_nbnd:
+            self.report(f'Setting nbnd={self.ctx.input_manager.Nb} in the NSCF step, not enough bands: {self.ctx.input_manager.nscf_nbnd}<{self.ctx.input_manager.Nb}')
+            self.ctx.input_manager.set_nscf_nbnd(self.ctx.input_manager.Nb)
+            # we redo nscf if not enough bands, we cannot proceed with yambo or QP_splitter:
+            if self.ctx.calc_to_do in ['yambo', 'QP_splitter']:
+                self.report(f"Recomputing NSCF step with nbnd={self.ctx.input_manager.nscf_nbnd}")
+                self.ctx.calc_to_do = 'nscf' 
+            
         self.ctx.splitted_QP = []
         self.ctx.qp_splitter = 0
-        self.report(" workflow initilization step completed.")
+        self.report("Workflow initilization step completed.")
 
     def can_continue(self):
 
-        """This function checks the status of the last calculation and determines what happens next, including a successful exit"""
-
-        if self.ctx.calc_to_do != 'workflow is finished':
-            self.report('the workflow continues with a {} calculation'.format(self.ctx.calc_to_do))
+        """This function checks the status of the last calculation and determines what happens next, including a successful exit.
+        
+        """
+        if self.ctx.calc_to_do != 'The workflow is finished':
+            self.report('The workflow continues with a {} calculation'.format(self.ctx.calc_to_do))
             return True
         else:
-            self.report('workflow is finished')
+            self.report('The workflow is finished')
             return False
 
-
     def perform_next(self):
-        """This function  will submit the next step, depending on the information provided in the context
+        """This function  will submit the next step, depending on the information provided in the context.
 
         The next step will be a yambo calculation if the provided inputs are a previous yambo/p2y run
-        Will be a PW scf/nscf if the inputs do not provide the NSCF or previous yambo parent calculations"""
-  
-        try:
+        Will be a PW scf/nscf if the inputs do not provide the NSCF or previous yambo parent calculations
+        
+        """
+        # check if the previous run failed.
+        if hasattr(self.ctx, 'calc'):
             calc = self.ctx.calc
             if not calc.is_finished_ok:
-                if '.yambo' in calc.process_type:
-                    if 'COPY_DBS' in self.ctx.yambo_inputs.yres.yambo.settings.get_dict().keys():
-                        if self.ctx.yambo_inputs.yres.yambo.settings.get_dict()['COPY_DBS']: pass
+                # we allow some QP calc to fail.
+                if self.ctx.calc_to_do=='QP_splitter': pass
                 self.report("last calculation failed, exiting the workflow")
                 return self.exit_codes.ERROR_WORKCHAIN_FAILED
-        except:
-            pass
 
         self.report('performing a {} calculation'.format(self.ctx.calc_to_do))
 
         if self.ctx.calc_to_do == 'scf':
-
-            self.ctx.scf_inputs.metadata.call_link_label = 'scf'
-            future = self.submit(PwBaseWorkChain, **self.ctx.scf_inputs)
-
+            self.ctx.input_manager.scf.metadata.call_link_label = 'scf'
+            scf_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what='scf')
+            future = self.submit(PwBaseWorkChain, **scf_inputs)
             self.ctx.calc_to_do = 'nscf'
 
         elif self.ctx.calc_to_do == 'nscf':
-
-            self.ctx.nscf_inputs.pw.parent_folder = self.ctx.calc.outputs.remote_folder
-            
-            self.ctx.nscf_inputs.metadata.call_link_label = 'nscf'  
-            future = self.submit(PwBaseWorkChain, **self.ctx.nscf_inputs)
-
+            self.ctx.input_manager.nscf.metadata.call_link_label = 'nscf'
+            self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
+            nscf_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what='nscf')
+            future = self.submit(PwBaseWorkChain, **nscf_inputs)
             self.ctx.calc_to_do = 'yambo'
 
         elif self.ctx.calc_to_do == 'yambo':
-
-            self.ctx.yambo_inputs['parent_folder'] = self.ctx.calc.outputs.remote_folder
-            
-            if hasattr(self.inputs, 'additional_parsing'):
+            if len(self.ctx.input_manager.additional_parsing) > 0:
                 self.report('updating yambo parameters to parse more results')
-                mapping, yambo_parameters = add_corrections(self.ctx.yambo_inputs, self.inputs.additional_parsing.get_list())
+                mapping, yambo_parameters = add_corrections(
+                    self.ctx.input_manager.parameters, 
+                    self.ctx.calc.outputs.remote_folder,
+                    self.ctx.input_manager.additional_parsing,
+                )
                 self.ctx.mapping = mapping
-                self.report(mapping)
-                self.ctx.yambo_inputs.yambo.parameters = yambo_parameters
-
-            self.ctx.yambo_inputs.metadata.call_link_label = 'yambo'
-            future = self.submit(YamboRestart, **self.ctx.yambo_inputs)
-
-            if hasattr(self.inputs,'QP_subset_dict'):
-                self.ctx.calc_to_do = 'QP splitter'
-                self.ctx.QP_subsets = self.inputs.QP_subset_dict.get_dict()
+                self.ctx.input_manager.parameters = yambo_parameters
+            if self.ctx.should_run_QP and self.ctx.should_run_bse:
+                call_link_label = 'chi_for_qp'
+                what='qp'
+                self.ctx.input_manager.qp.metadata.call_link_label = call_link_label
             else:
-                self.ctx.calc_to_do = 'workflow is finished'
+                call_link_label = 'yambo'
+                what='YamboRestart'
+                self.ctx.input_manager.yres.metadata.call_link_label = call_link_label
+            self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
+            yambo_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what=what)
+            future = self.submit(YamboRestart, **yambo_inputs)
+
+            if len(self.ctx.input_manager.QP_subsets_dict)>0:
+                # if we pass the instructions for the QP, it means we want to compute them.
+                self.ctx.calc_to_do = 'QP splitter'
+            else:
+                self.ctx.calc_to_do = 'The workflow is finished'
         
-        elif self.ctx.calc_to_do == 'QP splitter':
+        elif self.ctx.calc_to_do == 'QP splitter': # This is the multiple QP runs which will then be merged with yambopy
             
             QP = {}
             
@@ -729,92 +667,95 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     self.report('some calculation failed')
                     return self.exit_codes.ERROR_WORKCHAIN_FAILED
 
+            # If this is the first QP iteration, we set the parent and all the needed inputs.
             if self.ctx.qp_splitter == 0:
                 calc = self.ctx.calc
                 if not calc.is_finished_ok:
                     self.report("last calculation failed, exiting the workflow")
                     return self.exit_codes.ERROR_WORKCHAIN_FAILED
                     
-                self.ctx.yambo_inputs.parent_folder= self.ctx.calc.outputs.remote_folder
                 
-                self.ctx.yambo_inputs.yambo.parameters = take_calc_from_remote(self.ctx.yambo_inputs['parent_folder'],level=-1).inputs.parameters
-                self.ctx.yambo_inputs.yambo.settings = update_dict(self.ctx.yambo_inputs.yambo.settings, 'COPY_DBS', True)
-
-                if 'parallelism' in self.ctx.QP_subsets.keys():
-                    new_para = self.ctx.QP_subsets['parallelism']
-                    self.ctx.yambo_inputs.yambo.parameters = update_dict(self.ctx.yambo_inputs.yambo.parameters, list(new_para.keys()), list(new_para.values()),sublevel='variables')
-
-                if 'resources' in self.ctx.QP_subsets.keys():
-                    new_resources = self.ctx.QP_subsets['resources']
-                    self.ctx.yambo_inputs.yambo.metadata.options.resources = new_resources
+                # why this below?
+                #self.ctx.yambo_inputs.yambo.parameters = take_calc_from_remote(self.ctx.yambo_inputs['parent_folder'],level=-1).inputs.parameters
                 
-                if 'prepend' in self.ctx.QP_subsets.keys():
-                    new_prepend = self.ctx.QP_subsets['prepend']
-                    self.ctx.yambo_inputs.yambo.metadata.options.prepend_text = new_prepend
+                # we copy the aiida.out so we reuse the screening calculation.
+                if self.ctx.should_run_bse:
+                    self.ctx.input_manager.qp.settings['COPY_DBS'] = True
+                else:
+                    self.ctx.input_manager.yres.settings['COPY_DBS'] = True
+
+                # setting some specific configuration:
+                if 'parallelism' in self.ctx.input_manager.QP_subsets_dict:
+                    for k,v in self.ctx.input_manager.QP_subsets_dict['parallelism'].items():
+                        self.ctx.input_manager.set_variable(name=k, value=v)
+                if 'resources' in self.ctx.input_manager.QP_subsets_dict:
+                    self.ctx.input_manager.metadata.options.resources = self.ctx.input_manager.QP_subsets_dict['resources']
+                if 'prepend_text' in self.ctx.input_manager.QP_subsets_dict:
+                    self.ctx.input_manager.metadata.options.prepend_text = self.ctx.input_manager.QP_subsets_dict['prepend_text']
                 
 
-                self.ctx.yambo_inputs.clean_workdir = Bool(True)
-                mapping = gap_mapping_from_nscf(find_pw_parent(take_calc_from_remote(self.ctx.yambo_inputs['parent_folder'],level=-1)).pk)
+                self.ctx.input_manager.clean_workdir = orm.Bool(True)
+                mapping = gap_mapping_from_nscf(find_pw_parent(take_calc_from_remote(self.ctx.calc.outputs.remote_folder,level=-1)).pk)
                 self.ctx.mapping = mapping
 
-                split = self.ctx.QP_subsets.pop('split_bands',True)
-                consider_only = self.ctx.QP_subsets.pop('consider_only',[-1]) #[1,64], a range.
-                self.ctx.QP_subsets['consider_only'] = consider_only
+                consider_only = self.ctx.input_manager.QP_subsets_dict.get('consider_only',[-1]) #[1,64], a range.
+                self.ctx.input_manager.QP_subsets_dict['consider_only'] = consider_only
 
-                if 'range_QP' in self.ctx.QP_subsets.keys(): #the name can be changed..
-                    Energy_region = max(self.ctx.QP_subsets['range_QP'],mapping['nscf_gap_eV']*1.2)
+                if 'range_QP' in self.ctx.input_manager.QP_subsets_dict: #the name can be changed..
+                    Energy_region = max(self.ctx.input_manager.QP_subsets_dict['range_QP'], mapping['nscf_gap_eV']*1.2)
                     self.report('range of energy for QP: {} eV'.format(Energy_region))
-                    self.ctx.QP_subsets['explicit'], self.ctx.QP_subsets['scissored'] = QP_mapper(self.ctx.calc,
-                                                                                                tol = Energy_region,
-                                                                                                full_bands=self.ctx.QP_subsets.pop('full_bands',False),
-                                                                                                spectrum_tol=self.ctx.QP_subsets.pop('range_spectrum',
-                                                                                                Energy_region))
-                if 'boundaries' in self.ctx.QP_subsets.keys():
-                    #self.ctx.QP_subsets['explicit'] = QP_subset_groups(k_i=self.ctx.QP_subsets['boundaries'].pop('ki',1),
-                    #                                                  k_f=self.ctx.QP_subsets['boundaries'].pop('kf',mapping['number_of_kpoints']),
-                    #                                                  b_i=self.ctx.QP_subsets['boundaries']['bi'],
-                    #                                                  b_f=self.ctx.QP_subsets['boundaries']['bf'],
-                    #                                                  )
-                    k_i=self.ctx.QP_subsets['boundaries'].pop('ki',1)
-                    k_f=self.ctx.QP_subsets['boundaries'].pop('kf',mapping['number_of_kpoints'])
-                    b_i=self.ctx.QP_subsets['boundaries']['bi']
-                    b_f=self.ctx.QP_subsets['boundaries']['bf']
-                    
+                    self.ctx.input_manager.QP_subsets_dict['explicit'], self.ctx.input_manager.QP_subsets_dict['scissored'] = QP_mapper(
+                                                                    self.ctx.calc,
+                                                                    tol = Energy_region,
+                                                                    full_bands=self.ctx.input_manager.QP_subsets_dict.get('full_bands',False),
+                                                                    spectrum_tol=self.ctx.input_manager.QP_subsets_dict.get('range_spectrum',Energy_region),
+                                                                )
+                if 'boundaries' in self.ctx.input_manager.QP_subsets_dict:
+                    k_i=self.ctx.input_manager.QP_subsets_dict['boundaries'].pop('ki',1)
+                    k_f=self.ctx.input_manager.QP_subsets_dict['boundaries'].pop('kf',mapping['number_of_kpoints'])
+                    b_i=self.ctx.input_manager.QP_subsets_dict['boundaries']['bi']
+                    b_f=self.ctx.input_manager.QP_subsets_dict['boundaries']['bf']
 
-                    if hasattr(self.inputs,'already_computed_QP_db'):
-                        already_computed = self.inputs.already_computed_QP_db.get_list()
+                    if hasattr(self.ctx.input_manager,'already_computed_QP_db'):
+                        already_computed = self.ctx.input_manager.already_computed_QP_db
                     else:
                         already_computed = None
 
-                    self.ctx.QP_subsets['subsets'] = QP_list_merger([[k_i,k_f,b_i,b_f]],
-                                                                      self.ctx.QP_subsets['qp_per_subset'],
+                    self.ctx.input_manager.QP_subsets_dict['subsets'] = QP_list_merger([[k_i,k_f,b_i,b_f]],
+                                                                      self.ctx.input_manager.QP_subsets_dict['qp_per_subset'],
                                                                       consider_only=consider_only,
                                                                       already_computed_QP_db = already_computed
                                                                       )
 
-                if not 'subsets' in self.ctx.QP_subsets.keys():
-                    if 'explicit' in self.ctx.QP_subsets.keys():
-                        self.ctx.QP_subsets['subsets'] = QP_list_merger(self.ctx.QP_subsets['explicit'],
-                                                                        self.ctx.QP_subsets['qp_per_subset'],
+                if not 'subsets' in self.ctx.input_manager.QP_subsets_dict.keys():
+                    if 'explicit' in self.ctx.input_manager.QP_subsets_dict.keys():
+                        self.ctx.input_manager.QP_subsets_dict['subsets'] = QP_list_merger(self.ctx.input_manager.QP_subsets_dict['explicit'],
+                                                                        self.ctx.input_manager.QP_subsets_dict['qp_per_subset'],
                                                                         consider_only=consider_only)
 
-                self.report('subsets: {}'.format(self.ctx.QP_subsets['subsets']))
+                #self.report('subsets: {}'.format(self.ctx.input_manager.QP_subsets_dict['subsets']))
 
-            for i in range(1,1+self.ctx.QP_subsets['parallel_runs']):
-                if len(self.ctx.QP_subsets['subsets']) > 0:
-                    self.ctx.yambo_inputs.yambo.parameters = update_dict(self.ctx.yambo_inputs.yambo.parameters,['QPkrange'],[[self.ctx.QP_subsets['subsets'].pop(),'']],sublevel='variables')
-
-                    self.ctx.yambo_inputs.metadata.call_link_label = 'yambo_QP_splitted_{}'.format(i+self.ctx.qp_splitter)
-                    future = self.submit(YamboRestart, **self.ctx.yambo_inputs)
-                    self.report('launchiing YamboRestart <{}> for QP, iteration#{}'.format(future.pk,i+self.ctx.qp_splitter))
+            for i in range(1,1+self.ctx.input_manager.QP_subsets_dict['parallel_runs']):
+                if len(self.ctx.input_manager.QP_subsets_dict['subsets']) > 0:
+                    self.ctx.input_manager.parameters.set_variable(name='QPkrange', value=[[self.ctx.input_manager.QP_subsets_dict['subsets'].pop(),'']])
+                    self.ctx.input_manager.metadata.call_link_label = 'yambo_QP_splitted_{}'.format(i+self.ctx.qp_splitter)
+                    self.ctx.input_manager.set_parent_folder = self.ctx.calc.outputs.remote_folder
+                    if self.ctx.should_run_QP and self.ctx.should_run_bse:
+                        # if run bse@QP, it means that we need to run the qp using the qp inputs.
+                        what='qp'
+                    else:
+                        what='YamboRestart'
+                    yambo_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what=what)
+                    future = self.submit(YamboRestart, **yambo_inputs)
+                    self.report('Launching YamboRestart <{}> for QP, iteration#{} of {}'.format(future.pk,i+self.ctx.qp_splitter, len(self.ctx.input_manager.QP_subsets_dict['subsets'])))
                     self.ctx.splitted_QP.append(future.uuid)
                     QP[str(i+1)] = future
                 else:
-                    self.ctx.calc_to_do = 'workflow is finished'
+                    self.ctx.calc_to_do = 'The workflow is finished'
             
-            self.ctx.qp_splitter += self.ctx.QP_subsets['parallel_runs']
+            self.ctx.qp_splitter += self.ctx.input_manager.QP_subsets_dict['parallel_runs']
 
-            if len(self.ctx.QP_subsets['subsets']) == 0: self.ctx.calc_to_do = 'workflow is finished'
+            if len(self.ctx.input_manager.QP_subsets_dict['subsets']) == 0: self.ctx.calc_to_do = 'The workflow is finished'
 
             return ToContext(QP) #wait for all splitted calculations....
 
@@ -822,49 +763,50 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
     
     def post_processing_needed(self):
         #in case of multiple QP calculations, yes
-        if len(self.ctx.splitted_QP) > 0 and not self.ctx.yambo_inputs.yambo.settings.get_dict()['INITIALISE']:
-            self.report('merge QP needed')
+        if len(self.ctx.splitted_QP) > 0:
+            self.report('We need to merge the computed QP')
             return True
-        self.report('no post processing needed')
+        self.report('No post processing needed')
         return False
 
     def run_post_process(self):
-        
         #check if all QP splitted calculations were ok:
         for splitted in self.ctx.splitted_QP:
             if not load_node(splitted).is_finished_ok:
-                self.report('some splitted QP failed, exiting... ')
+                self.report('Some splitted QP is failed, exiting... ')
                 return self.exit_codes.ERROR_SPLITTED_QP_FAILED
         #merge
-        self.report('run merge QP')
+        self.report('Running merge QP')
 
         splitted = store_List(self.ctx.splitted_QP)
         
         self.out('splitted_QP_calculations', splitted)
-        output_name = Str('ndb.QP_merged')
+        output_name = orm.Str('ndb.QP_merged')
+        
+        self.ctx.input_manager.QP_subsets_dict['extend_db'] = self.ctx.input_manager.QP_subsets_dict.pop('extend_db',False)
+
         self.ctx.QP_db = merge_QP(
             splitted,
             output_name,
-            Int(self.ctx.calc.pk),
-            qp_settings=Dict(dict=self.ctx.QP_subsets),
+            orm.Int(self.ctx.calc.pk),
+            qp_settings=orm.Dict(dict=self.ctx.input_manager.QP_subsets_dict),
             already_computed_QP_db = self.inputs.get('already_computed_QP_db',orm.List([]))
             )
-
         self.out('merged_QP',self.ctx.QP_db)
         
-        self.ctx.QP_subsets['extend_db'] = self.ctx.QP_subsets.pop('extend_db',False)
-
-        if self.ctx.QP_subsets['extend_db']:
-            self.ctx.QP_db = merge_QP(splitted,output_name,Int(self.ctx.calc.pk),qp_settings=Dict(dict=self.ctx.QP_subsets))
-            self.ctx.QP_db_extended = extend_QP(splitted,output_name,Int(self.ctx.calc.pk),qp_settings=Dict(dict=self.ctx.QP_subsets),QP=self.ctx.QP_db)
-            self.out('merged_QP',self.ctx.QP_db)
-            self.report('run extend QP')
+        # Extend QP is requested:
+        if self.ctx.input_manager.QP_subsets_dict['extend_db']:
+            self.report('Running extend QP')
+            self.ctx.QP_db_extended = extend_QP(
+                splitted,output_name,
+                orm.Int(self.ctx.calc.pk),
+                qp_settings=orm.Dict(dict=self.ctx.input_manager.QP_subsets_dict),
+                QP=self.ctx.QP_db)
             self.out('extended_QP',self.ctx.QP_db_extended)
         #else:
-            #self.ctx.QP_db = merge_QP(splitted,output_name,Int(self.ctx.calc.pk),qp_settings=Dict(dict=self.ctx.QP_subsets))
+            #self.ctx.QP_db = merge_QP(splitted,output_name,Int(self.ctx.calc.pk),qp_settings=Dict(dict=self.ctx.input_manager.QP_subsets_dict))
         
-        
-
+        # We analyse the data for BSE, in case we need to find a new indirect gap for finite-q BSE...
         BSE_map = QP_analyzer(self.ctx.calc.pk, self.ctx.QP_db,self.ctx.mapping)
         self.ctx.BSE_map = BSE_map
 
@@ -872,13 +814,13 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
     def should_run_bse(self):
         #in case of BSE on top of GW just done, yes
-        if hasattr(self.inputs, 'qp') and hasattr(self.ctx,'QP_db') and not self.ctx.yambo_inputs.yambo.settings.get_dict()['INITIALISE']:
-            self.report('We run BSE@GW')
-            return True
-        return False
+        return self.ctx.should_run_bse
 
     def prepare_and_run_bse(self):
         
+        self.ctx.calc_to_do='bse'
+        
+        # here we don't care of using the YamboInputManager, we do not need it for now.
         self.ctx.yambo_inputs = self.exposed_inputs(YamboRestart, 'yres') 
         bse_params = self.ctx.yambo_inputs.yambo.parameters.get_dict()
 
@@ -888,23 +830,16 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         bse_params['variables']['KfnQPdb'] = "E < ./ndb.QP"
 
         self.ctx.yambo_inputs.parent_folder = self.ctx.calc.outputs.remote_folder
-        
-        # this should be left optional. as it is now. to be set in the submission script by the user.
-        #self.ctx.yambo_inputs.yambo.settings = update_dict(self.ctx.yambo_inputs.yambo.settings, 'COPY_DBS', True)
-
-        #Done in the step before: run_post_process.
-        #BSE_map = QP_analyzer(self.ctx.calc.pk, self.ctx.QP_db,self.ctx.mapping)
-        #self.ctx.BSE_map = BSE_map
 
         if not 'BSEBands' in bse_params['variables'].keys():
-            if 'scissored' in self.ctx.QP_subsets.keys():
-                bse_params['variables']['BSEBands'] = [[self.ctx.QP_subsets['scissored'][0],self.ctx.QP_subsets['scissored'][1]],'']
+            if 'scissored' in self.ctx.input_manager.QP_subsets_dict.keys():
+                bse_params['variables']['BSEBands'] = [[self.ctx.input_manager.QP_subsets_dict['scissored'][0],self.ctx.input_manager.QP_subsets_dict['scissored'][1]],'']
             else:
-                bse_params['variables']['BSEBands'] = [[BSE_map['v_min'],BSE_map['c_max']],'']
+                bse_params['variables']['BSEBands'] = [[self.ctx.BSE_map['v_min'],self.ctx.BSE_map['c_max']],'']
         if not 'BSEQptR' in bse_params['variables'].keys():
-            bse_params['variables']['BSEQptR'] = [[BSE_map['q_ind'],BSE_map['q_ind']],'']
+            bse_params['variables']['BSEQptR'] = [[self.ctx.BSE_map['q_ind'],self.ctx.BSE_map['q_ind']],'']
 
-        self.ctx.yambo_inputs.yambo.parameters = Dict(dict=bse_params)
+        self.ctx.yambo_inputs.yambo.parameters = orm.Dict(dict=bse_params)
 
         self.ctx.yambo_inputs.metadata.call_link_label = 'BSE'
         future = self.submit(YamboRestart, **self.ctx.yambo_inputs)
@@ -913,22 +848,26 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
     def report_wf(self):
 
-        #self.report('Final step.')
+        self.report('Final step.')
 
         calc = self.ctx.calc
         if calc.is_finished_ok:
 
             if hasattr(self.inputs, 'additional_parsing'):
                 #self.report('parsing additional quantities')
-                mapping, yambo_parameters = add_corrections(self.ctx.yambo_inputs, self.inputs.additional_parsing.get_list())
-                parsed = additional_parsed(calc, self.inputs.additional_parsing.get_list(), mapping)
+                mapping, yambo_parameters = add_corrections(
+                    self.ctx.input_manager.parameters, 
+                    self.ctx.calc.outputs.remote_folder,
+                    self.ctx.input_manager.additional_parsing,
+                )
+                parsed = additional_parsed(calc, self.ctx.input_manager.additional_parsing, mapping)
                 mapping_Dict = store_Dict(mapping)
                 self.out('nscf_mapping', mapping_Dict)
                 if hasattr(self.ctx, 'BSE_map'):
                     parsed.update(self.ctx.BSE_map)
                 if hasattr(self.ctx,'bse'):
                     if self.ctx.bse.is_finished_ok:
-                        parsed_bse = additional_parsed(self.ctx.bse, self.inputs.additional_parsing.get_list(), mapping)
+                        parsed_bse = additional_parsed(self.ctx.bse, self.ctx.input_manager.additional_parsing, mapping)
                         parsed.update(parsed_bse)
                         if hasattr(self.ctx, 'BSE_map'):
                             parsed.update(self.ctx.BSE_map)
@@ -938,7 +877,10 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 self.report('PARSED: {}'.format(parsed))
                 self.out('output_ywfl_parameters', store_Dict(parsed))
             elif hasattr(self.ctx, 'BSE_map'):
-                mapping, yambo_parameters = add_corrections(self.ctx.yambo_inputs, [])
+                mapping, yambo_parameters = add_corrections(
+                    self.ctx.input_manager.parameters, 
+                    self.ctx.calc.outputs.remote_folder,
+                    [])
                 mapping_Dict = store_Dict(mapping)
                 self.out('nscf_mapping', mapping_Dict)
                 self.out('output_ywfl_parameters', store_Dict(self.ctx.BSE_map))
@@ -951,14 +893,10 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 
             self.report("workflow completed successfully")
             
-            if hasattr(self.inputs, "clean_failed"):
-                if self.inputs.clean_failed: 
+            if hasattr(self.ctx.input_manager, "clean_failed"):
+                if self.ctx.input_manager.clean_failed: 
                     message = clean(calc.caller)
                     self.report(message)
         else:
             self.report("workflow NOT completed successfully")
-            #message = clean(calc.caller)
-            #self.report(message)
             return self.exit_codes.ERROR_WORKCHAIN_FAILED
-
-

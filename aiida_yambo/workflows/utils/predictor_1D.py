@@ -10,8 +10,29 @@ from ase import Atoms
 from aiida_yambo.utils.common_helpers import *
 
 
-def create_grid_1D(edges=[],delta=[],alpha=1/3,add = [],var=['BndsRnXp',],shift=0):
-    
+def create_grid_1D(edges=None, delta=None, alpha=1/3, add=None, var=None, shift=0):
+    """Build a 1D convergence grid for band or k-point mesh variables.
+
+    Creates a reference grid with strategic points (corners and midpoints) for
+    convergence analysis. Used to generate fitting data without running all
+    possible parameter combinations.
+
+    Args:
+        edges (list): [start, stop] endpoints for the variable.
+        delta (list|int): spacing for the grid.
+        alpha (float): interpolation factor for midpoints (default 1/3).
+        add (list): optional extra points to append.
+        var (list): variable names (e.g., ['kpoint_mesh']).
+        shift (int): index offset for a shifted grid.
+
+    Returns:
+        dict: variable name -> list of grid points.
+    """
+    edges = edges or []
+    delta = delta or []
+    add = add or []
+    var = var or ['BndsRnXp']
+
     if var[0] == 'kpoint_mesh':
         b_min = edges[0]
         b_max = edges[1]
@@ -98,22 +119,21 @@ class The_Predictor_1D():
         
         if not hasattr(self,'Fermi'): self.Fermi=0
 
-        self.var_ = copy.deepcopy(self.var) #to delete one of the band var:
-        self.delta_ = copy.deepcopy(self.delta) #to delete one of the band var:
-        self.index = [0] 
+        self.var_ = list(self.var)
+        self.delta_ = list(self.delta)
+        self.index = [0]
 
+        # Remove GbndRnge from independent variables since it's typically enslaved to BndsRnXp
         if 'BndsRnXp' in self.var and 'GbndRnge' in self.var:
             self.var_.remove('GbndRnge')
             self.delta_.pop(self.var.index('GbndRnge'))
 
-        #print('var',self.var)
-        #print('var_',self.var_)
-
+        # Create numpy arrays from result DataFrame columns for efficient operations
         for i in self.var_:
-            setattr(self,i,copy.deepcopy(list(self.result[i].values)))
-        
-        
-        self.parameters = np.array(self.grid[self.var_[0]]) #per i k, griglia specifica da inputs.
+            setattr(self, i, np.asarray(self.result[i].values, dtype=object))
+
+        # Extract the parameter grid used in calculations
+        self.parameters = np.asarray(self.grid[self.var_[0]])
         #ci vuole un k adapter
         if 'kpoint_mesh' in self.var_:
             

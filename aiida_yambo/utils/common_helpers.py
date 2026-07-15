@@ -220,6 +220,37 @@ def take_calc_from_remote(parent_folder,level=0):
         except:
             parent_calc = parent_folder.get_incoming(link_label_filter='remote_folder').one().node
         return parent_calc
+    
+def get_pw_inputs_builders(parent_folder):
+    scf_parent=None
+    nscf_parent=None
+    builder_scf, builder_nscf=None, None
+    parent_calc = take_calc_from_remote(parent_folder)
+    # getting the PwCalculations
+    ## SCF:
+    try:
+        scf_parent = find_pw_parent(parent_calc, calc_type=['scf'])
+        if scf_parent.caller:
+            builder_scf=scf_parent.caller.get_builder_restart()
+        else:
+            print('SCF parent PwBaseWorkChain not found')
+            scf_parent=None
+    except:
+        scf_parent=None
+        print('SCF parent not found')
+    ## NSCF:
+    try:
+        nscf_parent = find_pw_parent(parent_calc, calc_type=['nscf'])
+        if nscf_parent.caller:
+            builder_nscf=nscf_parent.caller.get_builder_restart()
+        else:
+            print('SCF parent PwBaseWorkChain not found')
+            nscf_parent=None
+    except:
+        nscf_parent=None
+        print('NSCF parent not found')
+        
+    return builder_scf, builder_nscf
 
 def take_fermi(calc_node_pk):  # calc_node_pk = node_conv_wfl.outputs.last_calculation
 
@@ -467,19 +498,19 @@ def gap_mapping_from_nscf(nscf_pk, additional_parsing_List=[]):
 
     if s_res: soc = True
     mapping = {
-    'dft_predicted': dft_predicted,
-    'valence': valence,
-    'conduction': conduction,
-    'number_of_kpoints':n_kpoints,
-    'nscf_gap_eV':round(min(bands[:,conduction-1])-max(bands[:,valence-1]),3),
-    'homo_k': ind_val+1,
-    'lumo_k': ind_cond+1,
-    'gap_type': gap_type,
-    'gap_': [[ind_val+1,ind_val+1,valence,valence],
-            [ind_cond+1,ind_cond+1,conduction,conduction]], #the qp to be computed
-    'soc':soc,
-    'magnetic_calculation':s_res
-           }
+        'dft_predicted': dft_predicted,
+        'valence': valence,
+        'conduction': conduction,
+        'number_of_kpoints':n_kpoints,
+        'nscf_gap_eV':round(min(bands[:,conduction-1])-max(bands[:,valence-1]),3),
+        'homo_k': ind_val+1,
+        'lumo_k': ind_cond+1,
+        'gap_type': gap_type,
+        'gap_': [[ind_val+1,ind_val+1,valence,valence],
+                [ind_cond+1,ind_cond+1,conduction,conduction]], #the qp to be computed
+        'soc':soc,
+        'magnetic_calculation':s_res
+    }
 
     for i in additional_parsing_List + high_symmetry:
         if i == 'homo' or i == 'lumo' or i == 'gap_':

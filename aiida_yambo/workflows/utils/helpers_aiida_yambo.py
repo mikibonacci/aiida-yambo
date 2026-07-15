@@ -191,93 +191,134 @@ def calc_manager_aiida_yambo(calc_info={}, wfl_settings={}): #tuning of these hy
     return calc_dict
 
 ################################## update_parameters - create parameters space #####################################
-def updater(calc_dict, inp_to_update, parameters, workflow_dict,internal_iteration,ratio=False):
+import copy
+from typing import Dict, Any, Tuple
+from aiida.orm import Dict as AiiDA_Dict, KpointsData, load_node
+
+def updater(calc_inputs, evaluator, explicit_value, workflow_dict: dict, index: int, group) -> Tuple[Any, Dict[str, Any], Any, Any]:
+    """
+    Updates AiiDA calculation inputs for a specific iteration step.
     
+    This function dynamically formats parameters based on name conventions ('bnd')
+    and metadata provided by the parameter space class instances, completely 
+    eliminating hardcoded variables.
+    
+    Args:
+        calc_inputs: The AiiDA input ports object to modify (e.g., self.ctx.calc_inputs).
+        evaluator: The active ConvergenceEval instance tracking runtime state.
+        explicit_value: The exact point value/vector to apply (e.g., 20.0 or [20.0, 4.0]).
+        workflow_dict: The dictionary tracking global workflow configuration (groups, parallelism).
+        index: The loop index tracking finishing concurrent submissions.
+        
+    Returns:
+        tuple: (updated_calc_inputs, values_dict, already_done_pk, parent_nscf_node)
+    """
     already_done = False
     values_dict = {}
-    parallelism_instructions = workflow_dict['parallelism_instructions']
+    parallelism_instructions = workflow_dict.get('parallelism_instructions', {})
     k_quantity = 0 
 
-    if not isinstance(calc_dict['var'],list):
-        calc_dict['var'] = [calc_dict['var']]
-    input_dict = copy.deepcopy(inp_to_update.yres.yambo.parameters.get_dict())
-    ratio = calc_dict['convergence_algorithm'] == 'newton_1D_ratio'
-    for var in calc_dict['var']:
+    # Clean metadata parsing straight from your smart objects
+    variables = evaluator.parameters.var
+    mirror_config = evaluator.parameters.mirror_values
 
-        if ratio and var=='NGsBlkXp' and (calc_dict['iter']>1 or internal_iteration>0):  
-            values_dict[var]=input_dict['variables'][var][0]
-            continue
-       
-        if var == 'kpoint_mesh' or var == 'kpoint_density':
-            k_quantity = parameters[var].pop(0)
-            k_quantity_shift = inp_to_update.nscf.kpoints.get_kpoints_mesh()[1]
-            inp_to_update.nscf.kpoints = KpointsData()
-            inp_to_update.nscf.kpoints.set_cell_from_structure(inp_to_update.scf.pw.structure) #to count the PBC...
-            if isinstance(k_quantity,tuple) or isinstance(k_quantity,list):
-                inp_to_update.nscf.kpoints.set_kpoints_mesh(k_quantity,k_quantity_shift) 
+    # Standardize explicit_value into an iterable list matching variables
+    # NOTE: it should also be a list, this first line is just for safety:
+    current_values = explicit_value if isinstance(explicit_value, list) else [explicit_value]
+    
+    # we then take the value [p1,p2] if it's a list, else we take a list [p1] so the for loop below works when getting the `val` value. 
+    current_values = current_values[index] if isinstance(current_values[0], list) else current_values[index:index+1]
+
+    # Deepcopy parameter dictionary safely once before modifying inputs
+    yambo_params = copy.deepcopy(calc_inputs.yres.yambo.parameters.get_dict())
+    variables_block = yambo_params.setdefault('variables', {})
+
+    for i,var in enumerate(variables):
+
+        val = current_values[i]
+        # 1. K-POINTS HANDLING (Updated to match inverse distance tracking)
+        if var in ('kpoint_mesh', 'kpoint_inverse_distance'):
+            k_quantity = val
+            k_quantity_shift = calc_inputs.nscf.kpoints.get_kpoints_mesh()[1]
+            
+            calc_inputs.nscf.kpoints = KpointsData()
+            calc_inputs.nscf.kpoints.set_cell_from_structure(calc_inputs.scf.pw.structure)
+            
+            if isinstance(k_quantity, (tuple, list)):
+                calc_inputs.nscf.kpoints.set_kpoints_mesh(k_quantity, k_quantity_shift) 
             else:
-                inp_to_update.nscf.kpoints.set_kpoints_mesh_from_density(1/k_quantity, force_parity=True)
-                calc_dict['kdensity'] = calc_dict.pop('kdensity',[])
-                calc_dict['kdensity'].append(k_quantity)
+                # 1 / inverse_distance provides the direct grid spacing mesh distribution
+                calc_inputs.nscf.kpoints.set_kpoints_mesh_from_density(1.0 / k_quantity, force_parity=True)
 
-            try:
-                inp_to_update.parent_folder =  find_pw_parent(take_calc_from_remote(inp_to_update.parent_folder), calc_type=['scf']).outputs.remote_folder 
-                #I need to start from the scf calc
-            except:
-                if hasattr(inp_to_update, 'parent_folder'): del inp_to_update.parent_folder #do all scf+nscf+y in case
+            # Safely flush remote parent folder context if swapping grid meshes to prevent errors
+            if hasattr(calc_inputs, 'parent_folder'):
+                try:
+                    calc_inputs.parent_folder = find_pw_parent(
+                        take_calc_from_remote(calc_inputs.parent_folder), 
+                        calc_type=['scf']
+                    ).outputs.remote_folder 
+                except Exception:
+                    del calc_inputs.parent_folder
 
-            inp_to_update.yres.yambo.settings = update_dict(inp_to_update.yres.yambo.settings, 'COPY_SAVE', False) #no yambo here
-            inp_to_update.yres.yambo.settings = update_dict(inp_to_update.yres.yambo.settings, 'COPY_DBS', False)  #no yambo here
-            values_dict[var]=k_quantity
-            if var == 'kpoint_mesh': k_quantity = 0
+            calc_inputs.yres.yambo.settings = update_dict(calc_inputs.yres.yambo.settings, 'COPY_SAVE', False)
+            calc_inputs.yres.yambo.settings = update_dict(calc_inputs.yres.yambo.settings, 'COPY_DBS', False)
+            
+            values_dict[var] = k_quantity
+            if var == 'kpoint_mesh': 
+                k_quantity = 0
+
+        # 2. DECOUPLED GENERIC PARAMETER & MIRROR HANDLING
         else:
             
-            if var in ['BndsRnXp','GbndRnge']:
-                if "BndsRnXs" in inp_to_update.yres.yambo.parameters.get_dict()['variables'].keys():
-                    input_dict['variables']['BndsRnXs'] = [[1,parameters[var].pop(0)],inp_to_update.yres.yambo.parameters['variables']['BndsRnXs'][-1]]
-                    values_dict[var]=input_dict['variables']['BndsRnXs'][0][1]
+            # Map out what elements require synchronization
+            targets_to_update = [var]
+            if isinstance(mirror_config, list):
+                targets_to_update.extend(mirror_config)
+            elif isinstance(mirror_config, dict) and var in mirror_config:
+                targets_to_update.extend(mirror_config[var])
+
+            # Dynamically retrieve unit string from parameter class properties
+            declared_unit = evaluator.parameters.units if isinstance(evaluator.parameters.units, str) else evaluator.parameters.units[i]
+
+            for target in targets_to_update:
+                if 'bnd' in target.lower():
+                    # Format: [[start_band, end_band], unit]
+                    # Band counts are unitless...
+                    variables_block[target] = [[1, val], '']
                 else:
-                    input_dict['variables'][var] = [[1,parameters[var].pop(0)],inp_to_update.yres.yambo.parameters['variables'][var][-1]]
-                    values_dict[var]=input_dict['variables'][var][0][1]
-            elif var == "NGsBlkXp" and "NGsBlkXs" in inp_to_update.yres.yambo.parameters.get_dict()['variables'].keys() and "BSENGBlk" in inp_to_update.yres.yambo.parameters.get_dict()['variables'].keys():
-                #we update all the parameters related to the cut-off. This is not a good implementation as we ask NGsBlkXp but we update also the others...
-                #input_dict['variables'][var] = [parameters[var].pop(0),inp_to_update.yres.yambo.parameters['variables'][var][-1]]
-                input_dict['variables']['NGsBlkXs'] = [parameters[var].pop(0),inp_to_update.yres.yambo.parameters['variables']['NGsBlkXs'][-1]]
-                input_dict['variables']['BSENGBlk'] = input_dict['variables']['NGsBlkXs']
-                values_dict[var]=input_dict['variables']['NGsBlkXs'][0]
-            else:                
-                input_dict['variables'][var] = [parameters[var].pop(0),inp_to_update.yres.yambo.parameters['variables'][var][-1]]
-                values_dict[var]=input_dict['variables'][var][0]
+                    # Format: [value, unit] (e.g. [4.0, 'Ry'])
+                    variables_block[target] = [val, declared_unit]
+            
+            values_dict[var] = val    # Extract scalar cutoff value
 
-            inp_to_update.yres.yambo.parameters = Dict(input_dict)
+            calc_inputs.yres.yambo.parameters = AiiDA_Dict(yambo_params)
 
-    #if len(parallelism_instructions.keys()) >= 1:
-    new_para, new_res, pop_list = set_parallelism(parallelism_instructions, inp_to_update, k_quantity)
+    # 3. PARALLELISM GENERATION SETUP
+    new_para, new_res, pop_list = set_parallelism(parallelism_instructions, calc_inputs, k_quantity)
 
     if new_para and new_res:
-        inp_to_update.yres.yambo.parameters = update_dict(inp_to_update.yres.yambo.parameters, list(new_para.keys()), 
-                                                        list(new_para.values()),sublevel='variables',pop_list=pop_list)
-        inp_to_update.yres.yambo.metadata.options.resources = new_res
-        try:
-            inp_to_update.yres.yambo.metadata.options.prepend_text = "export OMP_NUM_THREADS="+str(new_res['num_cores_per_mpiproc'])
-        except:
-            pass
+        calc_inputs.yres.yambo.parameters = update_dict(
+            calc_inputs.yres.yambo.parameters, 
+            list(new_para.keys()), 
+            list(new_para.values()), 
+            sublevel='variables', 
+            pop_list=pop_list
+        )
+        calc_inputs.yres.yambo.metadata.options.resources = new_res
+        if 'num_cores_per_mpiproc' in new_res:
+            calc_inputs.yres.yambo.metadata.options.prepend_text = f"export OMP_NUM_THREADS={new_res['num_cores_per_mpiproc']}"
     
-    already_done, parent_nscf, parent_scf = search_in_group(inp_to_update, 
-                                               workflow_dict['group'])
+    # 4. PARENT CORRELATION DEPENDENCY SEARCH
+    already_done, parent_nscf, parent_scf = search_in_group(calc_inputs, group)
     
-    if parent_nscf and not hasattr(inp_to_update, 'parent_folder'):
+    effective_parent = parent_nscf or parent_scf
+    if effective_parent and not hasattr(calc_inputs, 'parent_folder'):
         try:
-            inp_to_update.parent_folder =  load_node(parent_nscf).outputs.remote_folder 
-        except:
-            pass
-    elif parent_scf and not hasattr(inp_to_update, 'parent_folder'):
-        try:
-            inp_to_update.parent_folder =  load_node(parent_nscf).outputs.remote_folder 
-        except:
+            calc_inputs.parent_folder = load_node(effective_parent).outputs.remote_folder 
+        except Exception:
             pass
 
-    return inp_to_update, values_dict, already_done, parent_nscf
+    return calc_inputs, values_dict, already_done, parent_nscf
 
 ################################## parsers #####################################
 def take_quantities(calc_dict, workflow_dict, steps = 1, what = ['gap_eV'], backtrace=1):

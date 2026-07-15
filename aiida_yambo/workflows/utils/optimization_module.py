@@ -7,26 +7,37 @@ import copy
 from ase import Atoms
 from aiida_yambo.utils.common_helpers import *
 
-class Convergence_evaluator(): 
-    
-    def __init__(self, **kwargs): #lista_YamboIn, conv_array, parametri_da_conv(se lista fai fit multidimens), thr, window
+class Convergence_evaluator():
+    """Evaluate convergence data using simple fit and ratio-based checks.
+    This class implements a simpler convergence criterion than Newton's method:
+    - For dummy convergence: check if the last N values are within the threshold
+    - For ratio convergence: fit band energy vs G-vector data with linear or power-law
+    """    
+    def __init__(self, **kwargs):
+        """Initialize from calculation results and convergence parameters.
         
-        for k,v in kwargs['calc_dict'].items():
+                Kwargs expected:
+                calc_dict: Convergence settings (threshold, steps, max_iterations, etc.)
+                conv_array: Array of convergence quantities (e.g., gaps at each calculation)
+                p_val: Parameter value dictionary (parameters by name)
+                var: List of active convergence variables
+                quantities: Names/IDs of the quantities being analyzed 
+                real: DataFrame of calculation results
+                workflow_dict: Full workflow history
+        """
+        # Copy calc_dict attributes (convergence parameters, thresholds, algorithm info)
+        for k, v in kwargs['calc_dict'].items():
             setattr(self, k, v)
-        for k,v in kwargs.items():
-            if k != 'calc_dict': setattr(self, k, v)
-        print(kwargs['calc_dict'])
-        
-        self.p = []
-        for k in self.p_val.keys():
-            if k == 'mesh':continue
-            self.p.append(self.p_val[k])
-            print(self.p_val[k])
-        self.p = np.array(self.p)
-        print(self.p)
-
-        self.steps_ = self.steps
-
+            # Copy remaining kwargs (result data and analysis contexts)
+            for k, v in kwargs.items():
+                if k != 'calc_dict':
+                    setattr(self, k, v)
+                    
+                    # Collect parameter values into a numpy array, skipping the 'mesh' key
+                    # which contains raw k-point mesh data (handled separately)
+                    self.p = np.asarray([self.p_val[k] for k in self.p_val.keys() if k != 'mesh'], dtype=object)
+                    self.steps_ = self.steps
+                            
     def ratio_evaluator(self,what):
         Ry = np.array(list(set(self.workflow_dict.NGsBlkXp)))
         Ry.sort()
@@ -356,18 +367,18 @@ class Convergence_evaluator():
 
         new_metrics = [int((self.stop[0]-next_point[0])/(abs(popt[0]/self.conv_thr)**(1/candidates[0])-next_point[0])),
                        int((self.stop[1]-next_point[1])/(abs(popt[1]/self.conv_thr)**(1/candidates[1])-next_point[1]))]
-        infos = {'concavity':concavity,'extra':self.extra,'new_metrics':new_metrics,'power_law':candidates}
+        convergence_summary = {'concavity':concavity,'extra':self.extra,'new_metrics':new_metrics,'power_law':candidates}
         for h in range(len(next_point)):
-            infos[self.var[h]] = next_point[h]
-            infos[self.var[h]+'_fit_converged']=(abs(popt[0*2]/self.conv_thr))**(1/candidates[h])
+            convergence_summary[self.var[h]] = next_point[h]
+            convergence_summary[self.var[h]+'_fit_converged']=(abs(popt[0*2]/self.conv_thr))**(1/candidates[h])
 
         for h in range(len(next_point)):
             if next_point[h]>self.stop[h]:
-                infos.pop('new_metrics')
+                convergence_summary.pop('new_metrics')
                 break
 
 
-        return abs(homo[-1]-popt[1]*popt[3])<self.conv_thr*5,infos #and concavity > 0 in the first boolean
+        return abs(homo[-1]-popt[1]*popt[3])<self.conv_thr*5,convergence_summary #and concavity > 0 in the first boolean
     
     def analysis(self,): #also conv evaluation wrt the relative thr (0.01 on a 7 eV gap... not so important)
         

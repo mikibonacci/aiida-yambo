@@ -10,9 +10,27 @@ from ase import Atoms
 from aiida_yambo.utils.common_helpers import *
 
 
-def create_grid(edges=[],delta=[],alpha=0.25,add = [[],[]],var=['BndsRnXp','NGsBlkXp'],shift=[0,0]):
-    
-    b_min = edges[0]+shift[0]*delta[0]
+def create_grid(edges=None, delta=None, alpha=0.25, add=None, var=None, shift=None):
+    """Build a 2D convergence grid for band and PW cutoff variables.
+
+    Creates a 2D reference grid with strategic points for bivariate convergence analysis.
+    Points are placed at corners (ABCD) and midpoints (E, F) of the parameter space.
+
+    Args:
+        edges (list): [b_min, g_min, b_max, g_max] for band and G-vector ranges.
+        delta (list): [db, dg] spacing for each dimension.
+        alpha (float): interpolation factor for midpoints (default 0.25).
+        add (list): [[add_b_list], [add_g_list]] extra points to include.
+        var (list): [band_var, g_var] names (e.g., ['BndsRnXp', 'NGsBlkXp']).
+        shift (list): [shift_b, shift_g] offsets for grid generation.
+    """
+    edges = edges or []
+    delta = delta or []
+    add = add or [[], []]
+    var = var or ['BndsRnXp', 'NGsBlkXp']
+    shift = shift or [0, 0]
+
+    b_min = edges[0] + shift[0] * delta[0]
     b_max = edges[2]+shift[0]*delta[0]
     g_min = edges[1]+shift[1]*delta[1]
     g_max = edges[3]+shift[1]*delta[1]
@@ -47,48 +65,45 @@ def create_grid(edges=[],delta=[],alpha=0.25,add = [[],[]],var=['BndsRnXp','NGsB
     return {var[0]:b,var[1]:G} #A,B,C,D,E,F
 
 class The_Predictor_2D():
-    
-    '''Class to analyse the convergence behaviour of a system
-    using the new algorithm.'''
-    
-    def __init__(self, **kwargs):
-            
-        for k,v in kwargs['calc_dict'].items():
-            setattr(self,k,copy.deepcopy(v))
-        for k,v in kwargs.items():
-            if k != 'calc_dict': setattr(self,k,copy.deepcopy(v))
-        #print(kwargs['calc_dict'])
-        
-        if isinstance(self.what,list):
-            self.what = self.what[0]
-        
-        if not hasattr(self,'Fermi'): self.Fermi=0
+    """Analyze 2D convergence behavior using a bivariate predictor."""
 
-        self.var_ = copy.deepcopy(self.var) #to delete one of the band var:
-        self.delta_ = copy.deepcopy(self.delta) #to delete one of the band var:
-        self.index = [0] 
-            
+    def __init__(self, **kwargs):
+        for k, v in kwargs['calc_dict'].items():
+            setattr(self, k, copy.deepcopy(v))
+        for k, v in kwargs.items():
+            if k != 'calc_dict':
+                setattr(self, k, copy.deepcopy(v))
+
+        if isinstance(self.what, list):
+            self.what = self.what[0]
+
+        if not hasattr(self, 'Fermi'):
+            self.Fermi = 0
+
+        self.var_ = list(self.var)
+        self.delta_ = list(self.delta)
+        self.index = [0]
+
         if 'BndsRnXp' in self.var and 'GbndRnge' in self.var and len(self.var) > 2:
             self.var_.remove('GbndRnge')
             self.delta_.pop(self.var.index('GbndRnge'))
 
-        print('var',self.var)
-        print('var_',self.var_)
-
         for i in self.var_:
-            setattr(self,i,copy.deepcopy(list(self.result[i].values)))
+            setattr(self, i, np.asarray(self.result[i].values, dtype=object))
+
+        # Stack parameter arrays: shape (n_vars, n_points)
+        self.parameters = np.asarray(list(self.grid.values()))
         
-        self.parameters = np.array(list(self.grid.values()))
-        
-        #self.bb, self.GG = copy.deepcopy(list(self.result.BndsRnXp.values)),copy.deepcopy(list(self.result.NGsBlkXp.values))
-        
+        # Prepare result quantities: extract target quantity and add Fermi level offset if applicable
         self.res = copy.deepcopy(self.result[self.what].values[:] + self.Fermi)
         
+        # Compute band energies in Rydbergs for comparison with calc convergence thresholds
         try:
             self.bb_Ry = copy.deepcopy(self.bande[0,np.array(self.result.BndsRnXp.values,dtype='int64')-1]/13.6)
         except:
             self.bb_Ry = copy.deepcopy(self.bande[0,-1]/13.6)
             
+        # Apply Fermi offset to the result array as well
         self.r[:] = self.r[:] + self.Fermi
         
         #self.G = copy.deepcopy(self.G)

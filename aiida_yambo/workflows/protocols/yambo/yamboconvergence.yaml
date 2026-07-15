@@ -1,34 +1,31 @@
 default_inputs:
     meta_parameters:
-        conv_thr_k: 10
-        conv_thr_bG: 10
-        conv_thr_FFT: 10
+        convergence_thesholds:
+            kpoints: 10
+            Nb_Gcut: 10
+            FFTgvecs: 10
         conv_thr_units: '%'
-        FFTGvecs: {
-            'start_ratio': 0.25,
-            'stop_ratio': 0.7,
-            'delta_ratio': 0.1,
-            'max_ratio': 1,
-        }
-        bands: {
-            'start': 200,
-            'stop': 800,
-            'delta': 100,
-            'max': 2000,
-            'ratio':[10,25,50],
-        }
-        G_vectors: {
-            'start': 6,
-            'stop': 18,
-            'delta': 2,
-            'max': 40,
-        }
-        kpoint_density: {
-            'start': 0.8,
-            'stop': 0.2,
-            'delta': 1,
-            'max': 0.1,
-        }
+        FFTGvecs: 
+            start_ratio: 0.25
+            stop_ratio: 0.7
+            delta_ratio: 0.1
+            max_ratio: 1
+        Nb: 
+            start: 200
+            stop: 800
+            delta: 100
+            max: 2000
+            ratio: [10,25,50]
+        G_vectors: 
+            start: 6
+            stop: 18
+            delta: 2
+            max: 40
+        kpoint_density:
+            start: 0.8
+            stop: 0.2
+            delta: 1
+            max: 0.1
     ywfl:
         protocol: 'fast'
     workflow_settings:

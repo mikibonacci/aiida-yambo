@@ -1,27 +1,29 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
-import sys
-import itertools
-import traceback
 
-import time
-
-#if aiida_calcs:
-from aiida.orm import Dict, Str, Bool, KpointsData, RemoteData, List, load_node, Group, load_group
-
+from aiida import orm
+from aiida.orm import Dict, Str, Bool, KpointsData, List, load_node, Group, load_group
 from aiida.engine import WorkChain, while_ , if_
 from aiida.engine import ToContext
-from aiida.engine import submit
-from aiida import orm
-from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
+from aiida.plugins import WorkflowFactory
+
 from aiida_quantumespresso.common.types import ElectronicType, SpinType
 
-from aiida.plugins import WorkflowFactory
 from aiida_yambo.workflows.utils.helpers_aiida_yambo import *
-from aiida_yambo.workflows.utils.helpers_aiida_yambo import calc_manager_aiida_yambo as calc_manager
 from aiida_yambo.workflows.utils.helpers_workflow import *
 from aiida_yambo.utils.common_helpers import *
 from aiida_yambo.workflows.utils.helpers_yambowf import *
+
+from aiida_yambo.workflows.utils.parameters import (
+    ConvParam,
+    load_parameter_space
+)
+
+from aiida_yambo.workflows.utils.convergence import (
+    ConvergenceEvaluator
+)
+
+
 
 from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
@@ -35,41 +37,73 @@ class YamboConvergence(ProtocolMixin, WorkChain):
 
     @classmethod
     def define(cls, spec):
-        """Workfunction definition
+        """WorkChain definition
 
         """
         super(YamboConvergence, cls).define(spec)
 
-        spec.expose_inputs(YamboWorkflow, namespace='ywfl', namespace_options={'required': True,'populate_defaults': False})
-
-        spec.input('precalc_inputs', valid_type=Dict, required = False)
-
-        spec.input("parameters_space", valid_type=List, required=True, \
-                    help = 'variables to converge, range, steps, and max iterations')
-        spec.input("workflow_settings", valid_type=Dict, required=True, \
-                    help = 'settings for the workflow: type, quantity to be examinated...') #there should be a default
-        spec.input("parallelism_instructions", valid_type=Dict, required=False, \
-                    help = 'indications for the parallelism to be used wrt values of the parameters.')
-        spec.input("group_label", valid_type=Str, required=False, \
-                    help = 'group of calculations already done for this system.')
+        spec.expose_inputs(
+            YamboWorkflow, 
+            namespace="ywfl", 
+            namespace_options={
+                "required": True,
+                "populate_defaults": False
+            }
+        )
+        spec.input(
+            "parameters_space", 
+            valid_type=orm.List, 
+            required=True,
+            help = 'variables to converge, range, steps, and max iterations'
+        )
+        spec.input(
+            "workflow_settings", 
+            valid_type=orm.Dict, 
+            required=True,
+            help = 'settings for the workflow: type, quantities to be examinated...'
+        )
+        spec.input(
+            "parallelism_instructions", 
+            valid_type=orm.Dict, 
+            required=False,
+            help = 'indications for the parallelism to be used wrt values of the parameters.'
+        )
+        spec.input(
+            "group_label", 
+            valid_type=orm.Str, 
+            required=False, 
+            help = 'group of calculations already done for this system.'
+        )
 
 ##################################### OUTLINE ####################################
 
-        spec.outline(cls.start_workflow,
-                    while_(cls.has_to_continue)(
-                    if_(cls.pre_needed)(
-                    cls.do_pre,
-                    cls.prepare_calculations),
-                    cls.next_step,
-                    cls.data_analysis),
-                    cls.report_wf,
-                    )
+        spec.outline(
+            cls.start_workflow,
+            while_(cls.has_to_continue)(
+                if_(cls.p2y_needed)(
+                    cls.do_p2y,
+                    cls.prepare_calculations
+                ),
+                cls.update_next_step,
+                cls.perform_next_step,
+                cls.data_analysis),
+            cls.report_wf,
+        )
 
 ##################################################################################
+
         spec.expose_outputs(YamboWorkflow) #the last calculation
-        spec.output('history', valid_type = Dict, help='all calculations')
-        spec.output('infos', valid_type = Dict, help='infos on the convergence', required = False)
-        spec.output('remaining_iter', valid_type = List,  required = False, help='remaining convergence iter')       
+        spec.output(
+            'collection', 
+            valid_type=orm.Dict, 
+            help='all calculations'
+        )
+        spec.output(
+            'convergence_summary', 
+            valid_type=orm.Dict, 
+            required=False,
+            help='information on the convergence' 
+        )
 
         spec.exit_code(300, 'UNDEFINED_STATE',
                              message='The workchain is in an undefined state.') 
@@ -93,55 +127,47 @@ class YamboConvergence(ProtocolMixin, WorkChain):
     @classmethod
     def get_builder_from_protocol(
         cls,
-        pw_code,
-        preprocessing_code,
-        code,
-        protocol_qe='moderate',
-        protocol='moderate',
-        calc_type='gw',
-        structure=None,
-        overrides={},
-        NLCC=False,
-        RIM_v=False,
-        RIM_W=False,
-        parent_folder=None,
+        pw_code:orm.Code,
+        preprocessing_code:orm.Code,
+        code:orm.Code,
+        structure:orm.StructureData=None,
+        protocol_qe:str='moderate',
+        protocol:str='moderate',
+        calc_type:str='gw',
+        workflow_settings:dict=None,
+        convergence_parameters:list=['FFTGvecs',['BndsRnXp','GbndRnge','NGsBlkXp'],'kpoint_density'],
+        overrides:dict={},
+        NLCC:bool=False,
+        RIM_v:bool=False,
+        RIM_W:bool=False,
+        parent_folder:orm.RemoteData=None,
+        pseudo_family:str=None,
         electronic_type=ElectronicType.INSULATOR,
         spin_type=SpinType.NONE,
         initial_magnetic_moments=None,
-        pseudo_family = None,
         **_
     ):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
         :return: a process builder instance with all inputs defined ready for launch.
+        
+        By default, we will do convergence on: 'FFTGvecs','BndsRnXp','GbndRnge','NGsBlkXp','kpoint_density'
+        using the automated workflow as described in Bonacci et al. npj Comput Mater 9, 74 (2023).
         """
-        from aiida_quantumespresso.workflows.protocols.utils import recursive_merge
 
-        if isinstance(code, str):
-            
-            pw_code = orm.load_code(pw_code)
-            preprocessing_code = orm.load_code(preprocessing_code)
-            code = orm.load_code(code)
-
-        if electronic_type not in [ElectronicType.METAL, ElectronicType.INSULATOR]:
-            raise NotImplementedError(f'electronic type `{electronic_type}` is not supported.')
-
-        if spin_type not in [SpinType.NONE, SpinType.COLLINEAR]:
-            raise NotImplementedError(f'spin type `{spin_type}` is not supported.')
-
-        if overrides is None:
-            overrides = {}
+        # Setting the inputs: merging protocols and overrides
         inputs = cls.get_protocol_inputs(protocol, overrides=overrides)
 
+        # Getting the protocols to determine the parameters_space input
         meta_parameters = inputs.pop('meta_parameters',{})
         
+        # Initialization of the builder
         builder = cls.get_builder()
 
+        # Getting the YamboWorkflow overrides, to pass in its corresponding constructor below
         overrides_ywfl = overrides.pop('ywfl',{})
+        overrides_ywfl['clean_workdir'] = overrides_ywfl.pop('clean_workdir',False)            
 
-        overrides_ywfl['clean_workdir'] = overrides_ywfl.pop('clean_workdir',False)
-        
-
-        #########YWFL PROTOCOLS 
+        ######### YamboWorkflow initialization #########
         ywfl_builder = YamboWorkflow.get_builder_from_protocol(
                 pw_code,
                 preprocessing_code,
@@ -159,19 +185,23 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 initial_magnetic_moments=initial_magnetic_moments,
                 parent_folder=parent_folder,
                 pseudo_family=pseudo_family,
-                )
+                **_ # here we can pass more parameters specific to YamboWorkflow
+        )
 
         builder.ywfl = ywfl_builder._inputs(prune=True)
-        ######### convergence settings
-        if protocol == 'molecule':
-            protocol = 'moderate'
-            
+        
+        
+        if workflow_settings:
+            builder.workflow_settings = orm.Dict(workflow_settings)
+        else:
+            builder.workflow_settings = orm.Dict(overrides.get('workflow_settings', None))
+        
         if calc_type=='bse':
-            builder.workflow_settings = Dict(dict={})
             builder.workflow_settings['what'] = ['lowest_exciton','brightest_exciton']
+            builder.workflow_settings = orm.Dict(inputs['workflow_settings'])
 
-        ################ K mesh
-        builder.ywfl['nscf']['kpoints'] = KpointsData()
+        ################ K-points density ################
+        builder.ywfl['nscf']['kpoints'] = orm.KpointsData()
         builder.ywfl['nscf']['kpoints'].set_cell_from_structure(builder.ywfl['nscf']['pw']['structure'])
 
         builder.ywfl['nscf']['kpoints'].set_kpoints_mesh_from_density(meta_parameters['kpoint_density']['max'],force_parity=True)
@@ -187,45 +217,40 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         k_delta[np.where(builder.ywfl['nscf']['pw']['structure'].pbc)] = int(meta_parameters['kpoint_density']['delta'])
         k_delta = list(k_delta)
 
-        ################ Bands
-        nelectrons, PW_cutoff = periodical(structure.get_ase())
-        PW_cutoff = int(builder.ywfl['nscf']['pw']['parameters'].get_dict()['SYSTEM']['ecutwfc'])
-
+        # Getting information on the nelectrons, ecutwfc and volume
+        nelectrons, ecutwfc = periodical(structure.get_ase()) #nelectrons just as hint for later, not guaranteed to be correct (different pseudos can have different nelectrons)
+        ecutwfc = builder.ywfl['nscf']['pw']['parameters'].get_dict()['SYSTEM']['ecutwfc']
+        volume = structure.get_cell_volume()
+        
+        ################ FFTGVecs ################
+        FFT_start=int(meta_parameters['FFTGvecs']['start_ratio']*ecutwfc)
+        FFT_stop=int(meta_parameters['FFTGvecs']['stop_ratio']*ecutwfc)
+        FFT_max=int(meta_parameters['FFTGvecs']['max_ratio']*ecutwfc)
+        FFT_delta=int(meta_parameters['FFTGvecs']['delta_ratio']*ecutwfc)
+        
+        ################ Nb: bands for the X and Sc ################
+        # here the logic considers a ratio which depends on the dimensionality, or better on the volume:
+        # if the volume is lower then 
+        
         b_start=meta_parameters['bands']['start']
         b_stop=meta_parameters['bands']['stop']
         b_max=meta_parameters['bands']['max']
         b_delta=meta_parameters['bands']['delta']
 
-        b_start=max(int(max(6,nelectrons/2) * meta_parameters['bands']['ratio'][0]),meta_parameters['bands']['start']) 
-        b_stop=max(int(max(6,nelectrons/2) * meta_parameters['bands']['ratio'][1]),meta_parameters['bands']['stop'])
-        b_max=max(int(max(6,nelectrons/2) * meta_parameters['bands']['ratio'][2]), meta_parameters['bands']['max'])
+        volume_factor = np.log10(volume) # TODO: put the correct factor and describe it!!!
+        print('WARNING: still to fix the factor!!!!')
+        b_start=meta_parameters['bands']['start']*volume_factor
+        b_stop=meta_parameters['bands']['stop']*volume_factor
+        b_max=meta_parameters['bands']['max']*volume_factor
         
-
-        yambo_parameters = builder.ywfl['yres']['yambo']['parameters'].get_dict()
-        #for b in ['BndsRnXp','GbndRnge']:
-        #    yambo_parameters['variables'][b] = [[1,b_start],'']
-        
-        ################ G cutoff
+        ################ G_cut for X, Sc, BSE kernel ################
         G_start=meta_parameters['G_vectors']['start']
         G_stop=meta_parameters['G_vectors']['stop']
         G_max=meta_parameters['G_vectors']['max']
         G_delta=meta_parameters['G_vectors']['delta']
 
-        #yambo_parameters['variables']['NGsBlkXp'] = [G_start,'Ry']
-
-        ################ FFTGVecs
-
-        FFT_start=int(meta_parameters['FFTGvecs']['start_ratio']*PW_cutoff)
-        FFT_stop=int(meta_parameters['FFTGvecs']['stop_ratio']*PW_cutoff)
-        FFT_max=int(meta_parameters['FFTGvecs']['max_ratio']*PW_cutoff)
-        FFT_delta=int(meta_parameters['FFTGvecs']['delta_ratio']*PW_cutoff)
-
-
-        #########################
-
-        #builder.ywfl['yres']['yambo']['parameters'] = Dict(dict=yambo_parameters)
-
-        builder.parameters_space =  List([
+        ######################### PARAMETERS SPACE CREATION #########################
+        builder.parameters_space =  orm.List([
             {
                            'var':['FFTGvecs'],
                            'start': FFT_start,
@@ -234,7 +259,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                            'max':FFT_max,
                            'steps': 4, 
                            'max_iterations': 4, \
-                           'conv_thr': meta_parameters['conv_thr_FFT'],
+                           'conv_thr': meta_parameters['convergence_thesholds']['FFTgvecs'],
                            'conv_thr_units':'%',
                            'convergence_algorithm':'new_algorithm_1D',
                            },
@@ -246,7 +271,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                            'max':k_end,
                            'steps': 4, 
                            'max_iterations': 4, \
-                           'conv_thr': meta_parameters['conv_thr_k'],
+                           'conv_thr': meta_parameters['convergence_thesholds']['kpoints'],
                            'conv_thr_units':'%',
                            'convergence_algorithm':'new_algorithm_1D',
                            },  
@@ -259,7 +284,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                            'max':[b_max,b_max,G_max],
                            'steps': 6, 
                            'max_iterations': 8, \
-                           'conv_thr': meta_parameters['conv_thr_bG'],
+                           'conv_thr': meta_parameters['convergence_thesholds']['Nb_Gcut'],
                            'conv_thr_units':'%',
                            'convergence_algorithm':'new_algorithm_2D',
                            },
@@ -267,466 +292,405 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                         ])
 
         if protocol == 'molecule' or structure.pbc.count(True)==0:
-            builder.parameters_space = List(builder.parameters_space.get_list()[::2]) #no k points.
-
-        
-        builder.workflow_settings = Dict(inputs['workflow_settings'])
+            builder.parameters_space = orm.List(builder.parameters_space.get_list()[::2]) #no k-points, so we skip the second element in the parameters_space.
 
         return builder
+    
+    def from_yamboworkflow(self,):
+        raise NotImplementedError
+    
+    def from_yambopy(self,):
+        raise NotImplementedError
         
     def start_workflow(self):
         """Initialize the workflow"""
-        self.ctx.small_space = False
-        self.ctx.ratio = []   #ratio between Ecut and EmaxC
-        self.ctx.infos = {}   #converged parameters
+        self.ctx.limit_reached = False # this checks if we cannot increase the parameter more than the `max` value.
+        self.ctx.convergence_summary = {}   #converged parameters
         self.ctx.calc_inputs = self.exposed_inputs(YamboWorkflow, 'ywfl')        
-        self.ctx.remaining_iter = self.inputs.parameters_space.get_list()
-        self.ctx.remaining_iter.reverse()
         self.ctx.hint = {}
+        self.ctx.global_step = 0
+        self.ctx.wfl_pk = []
         self.ctx.workflow_settings = self.inputs.workflow_settings.get_dict()
-        self.ctx.how_bands = self.ctx.workflow_settings.pop('bands_nscf_update', 0)
-        self.ctx.workflow_manager = convergence_workflow_manager(self.inputs.parameters_space,
-                                                                self.ctx.workflow_settings,
-                                                                self.ctx.calc_inputs.yres.yambo.parameters.get_dict(), 
-                                                                self.ctx.calc_inputs.nscf.kpoints,
-                                                                )
+        self.ctx.bands_mode = self.ctx.workflow_settings.pop('bands_nscf_update', 0)
+        self.ctx.parameters_space = copy.deepcopy(load_parameter_space(self.inputs.parameters_space))
+        parameters_space = copy.deepcopy(load_parameter_space(self.inputs.parameters_space))
 
+        # we add the quantity to be converged to the additional_parsing list.
         if hasattr(self.ctx.calc_inputs,'additional_parsing'):
             l = self.ctx.workflow_settings['what']+self.ctx.calc_inputs.additional_parsing.get_list()
-            self.ctx.calc_inputs.additional_parsing = List(list(dict.fromkeys(l)))
+            self.ctx.calc_inputs.additional_parsing = orm.List(list(dict.fromkeys(l)))
         else:
-            self.ctx.calc_inputs.additional_parsing = List(list(self.ctx.workflow_settings['what']))
+            self.ctx.calc_inputs.additional_parsing = orm.List(list(self.ctx.workflow_settings['what']))
 
+        # here we load or create the group where to put all the calculations.
         if hasattr(self.inputs, "group_label"):
-            self.ctx.workflow_manager['group'] = load_group(self.inputs.group_label.value)
+            self.ctx.group = orm.load_group(self.inputs.group_label.value)
             self.report('group: {}'.format(self.inputs.group_label.value))
         else:
             try:
-                self.ctx.workflow_manager['group'] = load_group("convergence_tests_{}".format(self.ctx.calc_inputs.scf.pw.structure.get_formula()))
+                self.ctx.group = orm.load_group("convergence_tests_{}".format(self.ctx.calc_inputs.scf.pw.structure.get_formula()))
             except:
-                self.ctx.workflow_manager['group'] = Group(label="convergence_tests_{}".format(self.ctx.calc_inputs.scf.pw.structure.get_formula()))
+                self.ctx.group = Group(label="convergence_tests_{}".format(self.ctx.calc_inputs.scf.pw.structure.get_formula()))
                 self.report('creating group: {}'.format(self.ctx.calc_inputs.scf.pw.structure.get_formula()))
-            if not self.ctx.workflow_manager['group'].is_stored: self.ctx.workflow_manager['group'].store()
-            #here shold be added the YC to the group, not the single YWFLS
+            if not self.ctx.group.is_stored: self.ctx.group.store()
         
+        # here we add to the ctx the parallelism instructions, i.e. the parameter-dependent set of resources to be used.
         if hasattr(self.inputs, "parallelism_instructions"):
-            self.ctx.workflow_manager['parallelism_instructions'] = build_parallelism_instructions(self.inputs.parallelism_instructions.get_dict(),)
-            #self.report('para instr: {}'.format(self.ctx.workflow_manager['parallelism_instructions']))
+            self.ctx.parallelism_instructions = build_parallelism_instructions(self.inputs.parallelism_instructions.get_dict(),)
         else:
-            self.ctx.workflow_manager['parallelism_instructions'] = {}  
+            self.ctx.parallelism_instructions = {}  
         
-        self.ctx.calc_manager = calc_manager(self.ctx.workflow_manager['true_iter'].pop(), 
-                                            wfl_settings = self.ctx.workflow_settings,) 
+        # this calc_manager can be removed? we substitue it with self.ctx.current_convergence
+        self.ctx.current_convergence = ConvergenceEvaluator(
+            parameters=self.ctx.parameters_space.pop(),
+            what=self.ctx.workflow_settings['what']
+        ) 
 
         self.ctx.final_result = {}     
 
-        self.report('Workflow type: {}; looking for convergence of {}'.format(self.ctx.workflow_settings['type'], self.ctx.workflow_settings['what']))
+        self.report(
+            "Workflow type: {}; looking for convergence of {}"
+            .format(
+                self.ctx.workflow_settings['type'], 
+                self.ctx.current_convergence.what,
+            )
+        )
+        self.report(
+            "Workflow initilization step completed, the parameters will be: {}."
+            .format(
+                [params.var for params in parameters_space]
+            )
+        )
 
+    def has_to_continue(self):
         
-        #self.report('Space of parameters: {}'.format(self.ctx.workflow_manager['parameter_space']))
-        
-        self.report("Workflow initilization step completed, the parameters will be: {}.".format(self.ctx.calc_manager['var']))
+        """This function checks the status of the last calculation and determines what happens next, 
 
-    def has_to_continue(self): #AAAAA check if the space is not large enough.
+        """
         
-        """This function checks the status of the last calculation and determines what happens next, including a successful exit"""
-        if self.ctx.workflow_manager['fully_success']: 
+        if self.ctx.current_convergence.cannot_stop:
+            self.report('We should finish the set of calculations before the analysis.')
+            return True
+        
+        #failed cases
+        elif self.ctx.current_convergence.success and len(self.ctx.parameters_space)==0: 
             self.report('Workflow finished')
             return False
-
-        elif not self.ctx.calc_manager['success'] and \
-                    self.ctx.calc_manager['iter'] == self.ctx.calc_manager['max_iterations']:
+        elif not self.ctx.current_convergence.success and self.ctx.current_convergence.iterations_exceeded:
             self.report('Workflow failed due to max restarts exceeded for variable {}'.format(self.ctx.calc_manager['var']))
-
             return False
+        elif self.ctx.current_convergence.edges_exceeded:
+            self.report('space not large enough to complete convergence')
+            return False
+        elif not self.ctx.current_convergence.success and not self.ctx.current_convergence.iterations_exceeded:
+            self.report('Still iteration on {}'.format(self.ctx.current_convergence.parameters.var))
+            self.ctx.current_convergence.advance_iteration()
+            return True
         
+        # TODO: change the following we add some tolerance for failed calculations, to try to anyway converge
         elif not self.ctx.calc_manager['success'] and \
-                    self.ctx.calc_manager['iter'] > self.ctx.calc_manager['max_iterations']:
+                   self.ctx.calc_manager['iter'] > self.ctx.calc_manager['max_iterations']:
             self.report('Iterations: {} - Max iterations: {}'.format(self.ctx.calc_manager['iter'],self.ctx.calc_manager['max_iterations']))
             self.report('Workflow failed due to some failed calculation in the investigation of {}'.format(self.ctx.calc_manager['var']))
 
             return False
         
-        elif self.ctx.small_space:
-            self.report('space not large enough to complete convergence')
-            
-            return False
-
-        elif self.ctx.calc_manager['success']:
-            #update variable to conv
-            if 'converge_b_ratio' in self.ctx.hint.keys():
-                self.report('success for this G, now we go on')
-                if self.ctx.calc_manager['G_iter'] > self.ctx.calc_manager['global_iterations']:
-                    self.report('but no more attempts availables')
-                    self.ctx.calc_manager['success']=False
-                    return False
-                
-                return True
-
-
-
-            self.ctx.remaining_iter.pop()
-            self.ctx.calc_manager = calc_manager(self.ctx.workflow_manager['true_iter'].pop(), 
-                                            wfl_settings = self.ctx.workflow_settings,)
-
-            if self.ctx.calc_manager['convergence_algorithm'] == 'netwon_1D_ratio':
-                self.ctx.params_space, self.ctx.workflow_manager['parameter_space'],self.ctx.small_space = create_space(starting_inputs = self.ctx.workflow_manager['parameter_space'],
-                                                                        calc_dict = self.ctx.calc_manager,
-                                                                        hint=self.ctx.hint,
-                                                                        )
-                self.ctx.workflow_manager['parameter_space'] = copy.deepcopy(self.ctx.params_space)
-            self.report('Next parameters: {}'.format(self.ctx.calc_manager['var']))
-            
-            if self.ctx.workflow_manager['type'] == 'cheap':
-                self.report('Mode is "cheap", so we reset the other parameters to the initial ones.')
-                self.ctx.calc_inputs = self.exposed_inputs(YamboWorkflow, 'ywfl')
-                if hasattr(self.ctx.calc_inputs,'additional_parsing'):
-                    l = self.ctx.workflow_settings['what']+self.ctx.calc_inputs.additional_parsing.get_list()
-                    self.ctx.calc_inputs.additional_parsing = List(list(dict.fromkeys(l)))
-                else:
-                    self.ctx.calc_inputs.additional_parsing = List(list(self.ctx.workflow_settings['what']))
-                self.ctx.infos.update(self.ctx.hint)
-            else:
-                self.report('Mode is "heavy", so we mantain the other parameters as the converged ones, if any.')
+        # successful case:
+        elif self.ctx.current_convergence.success:                
+            if len(self.ctx.parameters_space) == 0:
+                self.report("No more parameters to be converged, the workflow will not continue.")
+                return False
             self.ctx.hint = {}
-            
             return True
-      
-        elif not self.ctx.calc_manager['success']:
-            self.report('Still iteration on {}'.format(self.ctx.calc_manager['var']))
-            
-            return True
-       
         else:
             self.report('Undefined state on {}, so we exit'.format(self.ctx.calc_manager['var']))
             self.ctx.calc_manager['success'] = 'undefined'
-            
             return False
+        
+    def update_next_step(self):
+        
+        if self.ctx.current_convergence.success:
+            self.ctx.current_convergence = ConvergenceEvaluator(
+                self.parameters_space.pop(),
+                what=self.ctx.workflow_settings['what']
+            ) 
+            
+            if self.ctx.workflow_settings.get('type') == 'cheap':
+                self.report('Mode is "cheap", so we reset the other parameters to the initial ones.')
+                self.ctx.calc_inputs = self.exposed_inputs(YamboWorkflow, 'ywfl')
+                if hasattr(self.ctx.calc_inputs,'additional_parsing'):
+                    l = self.ctx.current_convergence.what+self.ctx.calc_inputs.additional_parsing.get_list()
+                    self.ctx.calc_inputs.additional_parsing = List(list(dict.fromkeys(l)))
+                else:
+                    self.ctx.calc_inputs.additional_parsing = List(list(self.ctx.current_convergence.what))
+                self.ctx.convergence_summary.update(self.ctx.hint)
+            else:
+                self.report('Mode is "heavy", so we keep the previous parameters to be the converged ones, if any.')
+        
+        self.report(f'Convergence on: {self.ctx.current_convergence.parameters.var}')
+        self.report(f'With them, we mirror the following parameters {self.ctx.current_convergence.parameters.mirror_values}')
+        
 
-
-    def next_step(self):
+    def perform_next_step(self):
         """This function will submit the next step"""
-        self.ctx.calc_manager['iter'] +=1
-        self.ctx.calc_manager['skipped'] = 0
+        
+        # 1. Grab our smart evaluator tracker from context
+        evaluator = self.ctx.current_convergence
 
-        #loop on the given steps of given variables
         calc = {}
-        self.ctx.workflow_manager['values'] = []
-        if self.ctx.calc_manager['iter'] == 1: self.ctx.params_space = copy.deepcopy(self.ctx.workflow_manager['parameter_space'])
-        l = len(self.ctx.params_space[self.ctx.calc_manager['var'][0]])
-        for i in range(self.ctx.calc_manager['steps']):
-
-            if 'new_algorithm' in self.ctx.calc_manager['convergence_algorithm'] and i > l-1:
-                self.ctx.calc_manager['skipped'] += 1
-                continue
-
-            self.ctx.calc_inputs, value, already_done, parent_nscf = updater(self.ctx.calc_manager, 
-                                                self.ctx.calc_inputs,
-                                                self.ctx.params_space, 
-                                                self.ctx.workflow_manager,
-                                                i)
+                
+        if evaluator.new_grid: # shift the grid
+            # if iteration is not the first, we shift
+            if evaluator.current_iteration > 1:
+                self.ctx.params_space = self.ctx.params_space.with_shift(
+                        start_shift = self.ctx.delta, 
+                        stop_shift = self.ctx.delta
+                    )
+                evaluator.concurrent_steps_count=0
+        
+        # Dynamically picks build_linear_space() or custom grid based on the class type
+        if isinstance(evaluator.parameters, ConvParam):
+            self.ctx.params_space = evaluator.parameters.build_stepped_space()
+        else:
+            # Returns your clean 2D corner/cross grid
+            self.ctx.params_space = evaluator.parameters.build_diagonal_corners()
+        
+        if evaluator.check_single_point:
+            self.report(f'Now we verify the accuracy of the prediction by computing a single predicted point: {evaluator.inquired_point}')
+            self.ctx.params_space = [evaluator.inquired_point]
+            evaluator.concurrent_steps_count = evaluator.parameters.steps-1
+        
+        self.report(f"Running a max of {evaluator.parameters.max_concurrent_steps} concurrent steps of {evaluator.parameters.steps}")
+        for i in range(evaluator.parameters.max_concurrent_steps):
+            
+            if evaluator.concurrent_steps_count >= evaluator.parameters.steps:
+                break
+            
+            # Your updater stays the same, but passes explicit objects/grids cleanly
+            self.ctx.calc_inputs, values, already_done, parent_nscf = updater(
+                calc_inputs=self.ctx.calc_inputs,
+                evaluator=evaluator,
+                explicit_value=self.ctx.params_space, 
+                workflow_dict=self.ctx.parallelism_instructions,
+                index=evaluator.concurrent_steps_count if not evaluator.inquired_point else 0, # so if iteration = 1 and not finished, should start from evaluator.max_concurrent_steps+1
+                group=self.ctx.group,
+            )
                                     
-            self.ctx.workflow_manager['values'].append(value)
-            self.report('New parameters are: {}'.format(value))
+            self.report(f"New parameters are: {values}")
             
             if not already_done:
-                self.ctx.calc_inputs.metadata.call_link_label = 'iteration_'+str(self.ctx.workflow_manager['global_step']+i)
-                #if parent_nscf and not hasattr(self.ctx.calc_inputs,'parent_folder'):
-                    #self.report('Recovering NSCF/P2Y parent: {}'.format(parent_nscf))
+                label = f"iteration_{self.ctx.global_step}"
+                self.ctx.calc_inputs.metadata.call_link_label = label
+                
                 future = self.submit(YamboWorkflow, **self.ctx.calc_inputs)
-                self.ctx.workflow_manager['group'].add_nodes(future.caller)
+                self.ctx.group.add_nodes(future.caller)
             else:
-                self.report('Calculation already done: {}'.format(already_done))
+                self.report(f"Calculation already done: {already_done}")
                 future = load_node(already_done)
 
             calc[str(i+1)] = future
-            self.ctx.workflow_manager['wfl_pk'] = [future.pk] + self.ctx.workflow_manager['wfl_pk']  
-            self.ctx.workflow_manager['group'].add_nodes(future) #when added the whole YC, remove that
+            self.ctx.wfl_pk.insert(0, future.pk)  # Cleaner way to prepend to list
+            self.ctx.group.add_nodes(future)
+            
+            evaluator.concurrent_steps_count += 1
+            self.ctx.global_step += 1
+            
+            if len(self.ctx.params_space) == 0:
+                break
 
+        self.ctx.current_convergence=evaluator
+        
         return ToContext(calc)
 
-
     def data_analysis(self):
+        """Analyze completed calculations using the ConvergenceEvaluator object.
         
-        self.report('Data analysis, we will try to parse some result and decide what next.')
-        quantities = take_quantities(self.ctx.calc_manager, self.ctx.workflow_manager)
-        self.ctx.final_result = update_story_global(self.ctx.calc_manager, quantities, self.ctx.calc_inputs,\
-                         workflow_dict=self.ctx.workflow_manager)
+        This replaces the old, dictionary-heavy analysis_and_decision loops.
+        """
         
-        self.report(quantities)
-        errors = self.ctx.final_result.pop('errors')
-        if errors: 
-            self.ctx.none_encountered = True
-            self.ctx.calc_manager['iter'] = 2*self.ctx.calc_manager['max_iterations']
+        if self.ctx.current_convergence.cannot_stop:
+            self.report("Continuing the submission to complete the step.")
             return
-
-        self.ctx.calc_manager['success'], oversteps, self.ctx.none_encountered, quantityes, self.ctx.hint = \
-                analysis_and_decision(self.ctx.calc_manager, self.ctx.workflow_manager, hints = self.ctx.hint)
-        
-        self.report('results {}\n:{}'.format(self.ctx.workflow_manager['what'], quantityes))
-        self.report('HINTS: {}'.format(self.ctx.hint))
-
-        if self.ctx.calc_manager['success']:
-
-            self.report('Success, updating the history... ')
-            self.ctx.final_result = post_analysis_update(self.ctx.calc_inputs,\
-                 self.ctx.calc_manager, oversteps, self.ctx.none_encountered, success=True, workflow_dict=self.ctx.workflow_manager)
-            
-            #self.report(self.ctx.final_result)
-
-            df_story = pd.DataFrame.from_dict(self.ctx.workflow_manager['workflow_story'])
-            self.report('Success on {} reached in {} calculations, the result is {}' \
-                        .format(self.ctx.calc_manager['var'], (self.ctx.calc_manager['steps']-self.ctx.calc_manager['skipped'])*self.ctx.calc_manager['iter'],\
-                            df_story[df_story['useful'] == True].loc[:,self.ctx.workflow_manager['what']].values[-1:]))
-
-            if self.ctx.workflow_manager['true_iter'] == [] and not 'converge_b_ratio' in self.ctx.hint.keys(): #variables to be converged are finished
-                    self.ctx.workflow_manager['fully_success'] = True
-                    #self.report('hint: {}'.format(self.ctx.hint))
-                    self.ctx.extrapolated = self.ctx.hint.pop('extra', None)
-                    self.ctx.extrapolated = self.ctx.hint.pop('extrapolation', None)
-                    self.ctx.infos.update(self.ctx.hint)
-                    return 
-
-            self.report(self.ctx.calc_manager)
-            if self.ctx.hint and not 'dummy' in self.ctx.calc_manager['convergence_algorithm']: 
-                #self.report('hint: {}'.format(self.ctx.hint))
-                self.ctx.extrapolated = self.ctx.hint.pop('extra', None)
-                self.ctx.extrapolated = self.ctx.hint.pop('extrapolation', None)
-                self.ctx.infos.update(self.ctx.hint)
-
-                if 'converge_b_ratio' in self.ctx.hint.keys(): 
-                    self.ctx.calc_manager['iter'] = 0
-                    self.ctx.calc_manager['G_iter'] +=1
-                    if not 'NGsBlkXp' in self.ctx.hint.keys():
-                        self.ctx.hint['NGsBlkXp']=self.ctx.workflow_manager['parameter_space']['NGsBlkXp'][1]
-                        #self.report(self.ctx.hint)
-
-                self.ctx.params_space, self.ctx.workflow_manager['parameter_space'],self.ctx.small_space = create_space(starting_inputs = self.ctx.workflow_manager['parameter_space'],
-                                                                        calc_dict = self.ctx.calc_manager,
-                                                                        hint=self.ctx.hint,
-                                                                        )
-                
                     
-                self.ctx.workflow_manager['parameter_space'] = copy.deepcopy(self.ctx.params_space)
+        self.report('Starting unified data analysis step...')
+        evaluator = self.ctx.current_convergence
 
-        elif self.ctx.none_encountered:
-            self.report('Some calculations failed, updating the history and exiting... ')
-            
-            self.ctx.final_result = post_analysis_update(self.ctx.calc_inputs,\
-                 self.ctx.calc_manager, oversteps, self.ctx.none_encountered,success=False, workflow_dict=self.ctx.workflow_manager)
-            self.ctx.calc_manager['iter'] = self.ctx.calc_manager['max_iterations']+1 #exiting the workflow
+        # 1. Dynamically retrieve outputs from completed calculations in this context iteration
+        # Assumes your workflow outputs are mapped via ToContext(calc) dynamically as strings '1', '2', etc.
+        completed_calcs = []
+        for key in list(self.ctx):
+            if key.isdigit() and hasattr(self.ctx, key):
+                completed_calcs.append(getattr(self.ctx, key))
 
-        else:
-            self.report('Success on {} not reached yet in {} calculations' \
-                        .format(self.ctx.calc_manager['var'], (self.ctx.calc_manager['steps']-self.ctx.calc_manager['skipped'])*self.ctx.calc_manager['iter']))
-            
+        if not completed_calcs:
+            self.report("Error: No calculation nodes found to analyze.")
+            return self.exit_codes.UNDEFINED_STATE
 
-            if self.ctx.hint: 
-                if 'new_grid' in self.ctx.hint.keys():
-                    if self.ctx.hint['new_grid']: 
-                        self.ctx.final_result = post_analysis_update(self.ctx.calc_inputs,\
-                        self.ctx.calc_manager, oversteps, self.ctx.none_encountered,success='new_grid', workflow_dict=self.ctx.workflow_manager)
-                #self.report('hint: {}'.format(self.ctx.hint))
-                self.ctx.infos.update(self.ctx.hint)
-                if 'converge_b_ratio' in self.ctx.hint.keys(): 
-                    #self.ctx.calc_manager['iter'] = 0
-                    #self.ctx.calc_manager['G_iter'] +=1
-                    if not 'NGsBlkXp' in self.ctx.hint.keys():
-                        self.ctx.hint['NGsBlkXp']=self.ctx.workflow_manager['parameter_space']['NGsBlkXp'][1]
-                        #self.report(self.ctx.hint)
+        # 2. Let the Evaluator object process the finished calculations directly
+        # It handles parsing internal outputs ('what'), tracking historical states, and counting iterations
+        if 1: #try:
+            evaluator.evaluate_nodes(completed_calcs)
+        #except Exception as e:
+         #   self.report(f"Failed during node evaluation/parsing: {str(e)}")
+          #  self.ctx.none_encountered = True  # Signal calculation errors
+           # return self.exit_codes.CALCS_FAILED
 
-                #self.report('HINT: {}'.format(self.ctx.hint))
-                self.ctx.params_space, self.ctx.workflow_manager['parameter_space'],self.ctx.small_space = create_space(starting_inputs = self.ctx.workflow_manager['parameter_space'],
-                                                                        calc_dict = self.ctx.calc_manager,
-                                                                        hint=self.ctx.hint,
-                                                                        )
-                
-                #self.report('params_space: {}'.format(self.ctx.params_space))
-                #self.report('workflow_manager_PS: {}'.format(self.ctx.workflow_manager['parameter_space']))
-        #self.report(self.ctx.params_space)
-
-        self.report(self.ctx.hint)
-        self.ctx.workflow_manager['first_calc'] = False
+        # 3. Request next-step execution strategy from your Convergence Evaluator
+        decision = evaluator.get_decision()
+        self.ctx.hint = decision.get('hints', {})
         
-    def report_wf(self):
+        self.report(f"Evaluator decision: status={decision['status']} | Hints: {self.ctx.hint}")
 
-        self.report('Final step. It is {} that the workflow was successful'.format(str(self.ctx.workflow_manager['fully_success'])))
-        story = store_Dict(self.ctx.workflow_manager['workflow_story'])
-        self.out('history', story)
-        if hasattr(self.ctx,'hint'): 
-            if hasattr(self.ctx.hint,'infos'):
-                infos = store_Dict(self.ctx.infos)
-                self.out('infos',infos)
-        if hasattr(self.ctx,'infos'): 
-            self.ctx.infos.pop('new_grid',0)
-            self.ctx.infos.pop('already_computed',0)
-            self.ctx.infos.pop('extrapolation_units',0)
-            infos = store_Dict(self.ctx.infos)
-            self.out('infos',infos)
+        # 4. Handle state machine responses based on clean evaluator decisions
+        if decision['status'] == 'CONVERGED':
+            self.report(f"Success! Parameter group {evaluator.parameters.var} has converged.")
+            
+            # Store hints/converged data into the global tracker
+            self.ctx.convergence_summary.update(evaluator.get_summary())
+            
+            # Clean up current dynamic context trackers for the next iteration group
+            for key in list(self.ctx):
+                if key.isdigit():
+                    delattr(self.ctx, key)
+                    
+        elif decision['status'] == 'CONTINUE':
+            self.report(f"Convergence on {evaluator.parameters.var} not met yet. Refining parameter values.")
+            # Evaluator keeps its internal updated space, perform_next_step will pick up the updated step/shift.
+            
+        elif decision['status'] == 'FAILED_MAX_ITERATIONS':
+            self.report(f"Workflow reached max limit thresholds for {evaluator.parameters.var}.")
+            evaluator.success = False
+            
+        elif decision['status'] == 'SPACE_EXCEEDED':
+            self.report("The boundary configuration space is too small to fulfill convergence constraints.")
+            self.ctx.limit_reached = True
+
+        # Clean the context loop's temporary counter
+        evaluator.concurrent_steps_count = 0
+
+    def report_wf(self):
+        """Finalize outputs and set workflow exit status after convergence ends."""
+
+        evaluator = self.ctx.current_convergence
+        self.report('Final step. Workflow success: {}'.format(evaluator.success))
+
+        summary = self.ctx.convergence_summary.copy() if hasattr(self.ctx, 'convergence_summary') else {}
+        summary.pop('new_grid', None)
+        summary.pop('already_computed', None)
+        summary.pop('extrapolation_units', None)
+        self.out('collection', store_Dict(summary))
+        self.out('convergence_summary', store_Dict(summary))
+
         try:
-            calc = load_node(self.ctx.final_result['uuid'])
-            if self.ctx.workflow_manager['fully_success']: calc.set_extra('converged', True)
-            self.out_many(self.exposed_outputs(calc,YamboWorkflow))
-        except:
+            if self.ctx.final_result.get('uuid'):
+                calc = load_node(self.ctx.final_result['uuid'])
+                if evaluator.success:
+                    calc.set_extra('converged', True)
+                self.out_many(self.exposed_outputs(calc, YamboWorkflow))
+        except Exception:
             self.report('no YamboWorkflows available to expose outputs')
 
-        if not self.ctx.calc_manager['success'] and self.ctx.none_encountered:
-            remaining_iter = store_List(self.ctx.remaining_iter)
-            self.out('remaining_iter', remaining_iter)
+        if self.ctx.none_encountered:
             self.report('Some calculation failed, so we stopped the workflow')
             return self.exit_codes.CALCS_FAILED
-        elif self.ctx.small_space:
-            remaining_iter = store_List(self.ctx.remaining_iter)
-            self.out('remaining_iter', remaining_iter)
+        elif self.ctx.limit_reached:
             self.report('Space too small to complete convergence.')
-            return self.exit_codes.SPACE_TOO_SMALL    
-        elif not self.ctx.calc_manager['success']:
-            remaining_iter = store_List(self.ctx.remaining_iter)
-            self.out('remaining_iter', remaining_iter)
+            return self.exit_codes.SPACE_TOO_SMALL
+        elif not evaluator.success:
             self.report('Convergence not reached')
             return self.exit_codes.CONVERGENCE_NOT_REACHED
         elif self.ctx.calc_manager['success'] == 'undefined':
-            remaining_iter = store_List(self.ctx.remaining_iter)
-            self.out('remaining_iter', remaining_iter)
             self.report('Undefined state')
             return self.exit_codes.UNDEFINED_STATE    
 
-
 ############################### preliminary calculation #####################
-    def pre_needed(self):
+    def p2y_needed(self):
+        """Determine whether a preliminary calculation is required before convergence."""
 
-        if 'skip_pre' in self.ctx.workflow_settings.keys():
-            if  self.ctx.workflow_settings['skip_pre']: 
-                self.report('skipping pre, debug mode')
-                return False
-        
-        if not hasattr(self.ctx,'params_space'):
-            self.ctx.params_space = copy.deepcopy(self.ctx.workflow_manager['parameter_space'])
-        #self.report('detecting if we need a starting calculation...')
-        self.report(self.ctx.workflow_manager['parameter_space'])        
-        
-        if self.ctx.how_bands == 'all-at-once' or  isinstance(self.ctx.how_bands, int) or 'new_alg' in self.ctx.calc_manager['convergence_algorithm']:
-            self.ctx.space_index = 0
-            #if 'BndsRnXp' in self.ctx.workflow_manager['parameter_space'].keys() and len(self.ctx.params_space['BndsRnXp'])>0: 
-                #self.report('Max #bands needed in the whole convergence = {}'.format(max(self.ctx.params_space['BndsRnXp'])))
-                
-        elif self.ctx.how_bands == 'single-step' and 'BndsRnXp' in self.ctx.calc_manager['var']:
-            self.ctx.space_index = self.ctx.calc_manager['steps']*(1+self.ctx.calc_manager['iter'])
-            if self.ctx.space_index  >= len(self.ctx.params_space['BndsRnXp']): self.ctx.space_index = 0
-            #self.report('Max #bands needed in this step = {}'.format(max(self.ctx.params_space['BndsRnXp'][:self.ctx.space_index-1])))
-        elif self.ctx.how_bands == 'single-step' and 'GbndRnge' in self.ctx.calc_manager['var']:
-            self.ctx.space_index = self.ctx.calc_manager['steps']*(1+self.ctx.calc_manager['iter'])
-            if self.ctx.space_index  >= len(self.ctx.params_space['BndsRnXp']): self.ctx.space_index = 0
-            #self.report('Max #bands needed in this step = {}'.format(max(self.ctx.params_space['BndsRnXp'][:self.ctx.space_index-1])))
-        elif self.ctx.how_bands == 'full-step' and 'BndsRnXp' in self.ctx.calc_manager['var']:
-            #self.report(self.ctx.params_space['BndsRnXp'])
-            self.ctx.space_index = self.ctx.calc_manager['steps']*self.ctx.calc_manager['max_iterations']
-            if self.ctx.space_index  >= len(self.ctx.params_space['BndsRnXp']): self.ctx.space_index = 0
-            #self.report('Max #bands needed in this iteration = {}'.format(max(self.ctx.params_space['BndsRnXp'][:self.ctx.space_index-1])))
-        elif self.ctx.how_bands == 'full-step' and 'GbndRnge' in self.ctx.calc_manager['var']:
-            self.ctx.space_index = self.ctx.calc_manager['steps']*self.ctx.calc_manager['max_iterations']
-            if self.ctx.space_index  >= len(self.ctx.params_space['BndsRnXp']): self.ctx.space_index = 0
-            #self.report('Max #bands needed in this iteration = {}'.format(max(self.ctx.params_space['BndsRnXp'][:self.ctx.space_index-1])))
-
-        if 'new' in self.ctx.calc_manager['convergence_algorithm']: 
-            self.ctx.space_index = 0
-            if 'BndsRnXp' in self.ctx.params_space.keys() and 'BndsRnXp' in self.ctx.calc_manager['var']:
-                yambo_bandsX = max(self.ctx.params_space['BndsRnXp'][:])
-            else:
-                yambo_bandsX = 0 
-            if 'GbndRnge' in self.ctx.params_space.keys() and 'GbndRnge' in self.ctx.calc_manager['var']:
-                yambo_bandsSc = max(self.ctx.params_space['GbndRnge'][:])
-            else:
-                yambo_bandsSc = 0
-        else:
-            if 'BndsRnXp' in self.ctx.params_space.keys() and 'BndsRnXp' in self.ctx.calc_manager['var']:
-                yambo_bandsX = max(self.ctx.params_space['BndsRnXp'][:self.ctx.space_index-1])
-            else:
-                yambo_bandsX = 0 
-            if 'GbndRnge' in self.ctx.params_space.keys() and 'GbndRnge' in self.ctx.calc_manager['var']:
-                yambo_bandsSc = max(self.ctx.params_space['GbndRnge'][:self.ctx.space_index-1])
-            else:
-                yambo_bandsSc = 0
-
-        self.ctx.gwbands = max(yambo_bandsX,yambo_bandsSc)
-        if 'BndsRnXp' in self.ctx.calc_manager['var'] or 'GbndRnge' in self.ctx.calc_manager['var']:
-            if self.ctx.gwbands > 0 and isinstance(self.ctx.how_bands, int):
-                self.ctx.gwbands = min(self.ctx.gwbands, self.ctx.how_bands)
-
-
-        if 'kpoint_mesh' in self.ctx.calc_manager['var'] or 'kpoint_density' in self.ctx.calc_manager['var']:
-            #self.report('Not needed, we start with k-points')
+        if self.ctx.workflow_settings.get('skip_pre'):
+            self.report('skipping pre (debug mode)')
             return False
 
-        try:
-            already_done, parent_nscf, parent_scf = search_in_group(self.ctx.calc_inputs, 
-                                                self.ctx.workflow_manager['group'], up_to_p2y = True,)
+        current_parameters = self.ctx.current_convergence.parameters
+        if not hasattr(self.ctx, 'params_space'):
+            self.ctx.params_space = copy.deepcopy(current_parameters)
 
-            #self.report(already_done,)
-            #self.report(parent_nscf)
-            #self.report(parent_scf)
+        self.report(f'Current convergence variables: {current_parameters.var}')
+
+        if any(v in ('kpoint_mesh', 'kpoint_density') for v in current_parameters.var):
+            return False
+
+        def _param_stop_value(identifier='nbnd'):
+            name = None
+            for n in current_parameters.var:
+                if identifier in n.lower():
+                    name = n
+            if not name:
+                return 0
+            index = current_parameters.var.index(name)
+            stop = current_parameters.stop[index]
+            if isinstance(stop, list):
+                return stop[index]
+            return stop
+
+        self.ctx.gwbands = _param_stop_value(identifier='nbnd')
+        if isinstance(self.ctx.bands_mode, int) and self.ctx.gwbands > 0:
+            self.ctx.gwbands = min(self.ctx.gwbands, self.ctx.bands_mode)
+
+        try:
+            already_done, parent_nscf, parent_scf = search_in_group(self.ctx.calc_inputs, self.ctx.group, up_to_p2y=True)
 
             if already_done:
                 try:
-                    self.ctx.calc_inputs.parent_folder =  load_node(already_done).outputs.remote_folder 
-                except:
+                    self.ctx.calc_inputs.parent_folder = load_node(already_done).outputs.remote_folder
+                except Exception:
                     pass
-            elif parent_nscf:
+                return False
+
+            if parent_nscf:
                 try:
-                    self.ctx.calc_inputs.parent_folder =  load_node(parent_nscf).outputs.remote_folder 
-                except:
+                    self.ctx.calc_inputs.parent_folder = load_node(parent_nscf).outputs.remote_folder
+                except Exception:
                     pass
             elif parent_scf:
                 try:
-                    self.ctx.calc_inputs.parent_folder =  load_node(parent_scf).outputs.remote_folder 
-                except:
+                    self.ctx.calc_inputs.parent_folder = load_node(parent_scf).outputs.remote_folder
+                except Exception:
                     pass
 
             scf_params, nscf_params, redo_nscf, self.ctx.bands, messages = quantumespresso_input_validator(self.ctx.calc_inputs)
             self.report(messages)
-            self.ctx.gwbands = max(self.ctx.gwbands,self.ctx.bands)
-            parent_calc = take_calc_from_remote(self.ctx.calc_inputs.parent_folder) 
-            
+            self.ctx.gwbands = max(self.ctx.gwbands, self.ctx.bands)
+            parent_calc = take_calc_from_remote(self.ctx.calc_inputs.parent_folder)
             nbnd = nscf_params.get_dict()['SYSTEM']['nbnd']
 
             if nbnd < self.ctx.gwbands:
-                #self.report('we have to compute the nscf part: not enough bands, we need {} bands to complete all the calculations'.format(self.ctx.gwbands))
-                set_parent(self.ctx.calc_inputs, find_pw_parent(parent_calc, calc_type = ['scf']))
-                return True
-            elif parent_calc.process_type=='aiida.calculations:yambo.yambo' and not hasattr(self.inputs, 'precalc_inputs'):
-                #self.report('not required, yambo parent and no precalc requested')   
-                return False         
-            elif hasattr(self.inputs, 'precalc_inputs'):
-                #self.report('yes, precalc requested in the inputs')
-                return True
-            else:
-                #self.report('yes, no yambo parent')
-                return True
-        except:
-            try:
-                already_done, parent_nscf, parent_scf = search_in_group(self.ctx.calc_inputs, 
-                                            self.ctx.workflow_manager['group'], up_to_p2y = True)
-            
-                if already_done: 
-                    set_parent(self.ctx.calc_inputs, load_node(already_done))
-                    #self.report('yambo parent found in group: p2y not needed')
-                    return False
-                
-                elif parent_nscf: 
-                    set_parent(self.ctx.calc_inputs, load_node(parent_nscf))
-                    #self.report('yes, no yambo parent, setting parent nscf found in group')
-                    return True
-                
-                else: 
-                    parent_calc = take_calc_from_remote(self.ctx.calc_inputs.parent_folder)              
-                    set_parent(self.ctx.calc_inputs, find_pw_parent(parent_calc, calc_type = ['scf']))
-                    #self.report('yes, no yambo parent, setting parent scf')
-                    return True
-            except:
-                #self.report('no available parent folder, so we start from scratch')
+                set_parent(self.ctx.calc_inputs, find_pw_parent(parent_calc, calc_type=['scf']))
                 return True
 
-    def do_pre(self):
+            if parent_calc.process_type == 'aiida.calculations:yambo.yambo' and not hasattr(self.inputs, 'precalc_inputs'):
+                return False
+
+            return hasattr(self.inputs, 'precalc_inputs') or True
+        except Exception:
+            try:
+                already_done, parent_nscf, parent_scf = search_in_group(self.ctx.calc_inputs, self.ctx.group, up_to_p2y=True)
+
+                if already_done:
+                    set_parent(self.ctx.calc_inputs, load_node(already_done))
+                    return False
+                elif parent_nscf:
+                    set_parent(self.ctx.calc_inputs, load_node(parent_nscf))
+                    return True
+                else:
+                    parent_calc = take_calc_from_remote(self.ctx.calc_inputs.parent_folder)
+                    set_parent(self.ctx.calc_inputs, find_pw_parent(parent_calc, calc_type=['scf']))
+                    return True
+            except Exception:
+                return True
+
+    def do_p2y(self):
+        """Submit the pre-calculation or parent preparation step."""
         self.ctx.pre_inputs = self.exposed_inputs(YamboWorkflow, 'ywfl')
         self.ctx.pre_inputs.yres.clean_workdir = Bool(False)
 
@@ -737,19 +701,11 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             self.report('mesh check')
             self.ctx.pre_inputs.nscf.kpoints = self.ctx.calc_inputs.nscf.kpoints
 
-        if hasattr(self.inputs, 'precalc_inputs'):
-            self.ctx.calculation_type='pre_yambo'
-            self.ctx.pre_inputs.yres.yambo.parameters = self.inputs.precalc_inputs
-            self.ctx.pre_inputs.additional_parsing = self.ctx.calc_inputs.additional_parsing 
-        else:
-            self.ctx.calculation_type='p2y'
-            self.ctx.pre_inputs.yres.yambo.parameters = update_dict(self.ctx.pre_inputs.yres.yambo.parameters, 
-                                                            ['GbndRnge','BndsRnXp'], [[[1,self.ctx.gwbands],''],[[1,self.ctx.gwbands],'']],sublevel='variables')
-            #self.report(self.ctx.pre_inputs.yres.yambo.parameters.get_dict())
-            self.ctx.pre_inputs.yres.yambo.settings = update_dict(self.ctx.pre_inputs.yres.yambo.settings, 'INITIALISE', True)
-                
-            if hasattr(self.ctx.pre_inputs, 'additional_parsing'):
-                delattr(self.ctx.pre_inputs, 'additional_parsing')
+        self.ctx.calculation_type='p2y'
+        self.ctx.pre_inputs.yres.yambo.settings = update_dict(self.ctx.pre_inputs.yres.yambo.settings, 'INITIALISE', True)
+            
+        if hasattr(self.ctx.pre_inputs, 'additional_parsing'):
+            delattr(self.ctx.pre_inputs, 'additional_parsing')
 
         self.report('doing the calculation: {}'.format(self.ctx.calculation_type))
         calc = {}
@@ -757,18 +713,16 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         calc[self.ctx.calculation_type] = self.submit(YamboWorkflow, **self.ctx.pre_inputs) #################run
         self.ctx.PRE = calc[self.ctx.calculation_type]
         self.report('Submitted YamboWorkflow up to {}, pk = {}'.format(self.ctx.calculation_type,calc[self.ctx.calculation_type].pk))
-        self.ctx.workflow_manager['group'].add_nodes(calc[self.ctx.calculation_type]) #when added the whole YC, remove that
+        self.ctx.group.add_nodes(calc[self.ctx.calculation_type]) #when added the whole YC, remove that
 
-        load_node(calc[self.ctx.calculation_type].pk).label = self.ctx.calculation_type
+        orm.load_node(calc[self.ctx.calculation_type].pk).label = self.ctx.calculation_type
 
-        if hasattr(self.inputs, 'precalc_inputs'):
-            self.ctx.calc_inputs.yres.yambo.settings = update_dict(self.ctx.calc_inputs.yres.yambo.settings, 'COPY_DBS', True)
-        else:
-            self.ctx.calc_inputs.yres.yambo.settings = update_dict(self.ctx.calc_inputs.yres.yambo.settings, 'INITIALISE', False)
+        self.ctx.calc_inputs.yres.yambo.settings = update_dict(self.ctx.calc_inputs.yres.yambo.settings, 'INITIALISE', False)
 
         return ToContext(calc)
 
     def prepare_calculations(self):
+        """Attach the pre-calculation remote folder as parent before launching convergence calcs."""
         if not self.ctx.PRE.is_finished_ok:
             self.report('the pre calc was not succesful, exiting...')
             return self.exit_codes.PRECALC_FAILED

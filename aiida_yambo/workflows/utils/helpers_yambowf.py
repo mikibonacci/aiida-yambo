@@ -26,6 +26,10 @@ except:
 
 from aiida_yambo.utils.defaults.create_defaults import *
 
+from aiida import orm, load_profile
+
+load_profile()
+
 import pathlib
 import tempfile
 
@@ -95,16 +99,16 @@ def QP_bands(node,QP_merged=None,mapping=None,only_scissor=False, plot=False):
                 print(p)
                 print(len(p),bulk)
                 if len(p) > 0 and bulk:
-                    if '$\Gamma$' == p[-1][-1]:
+                    if r'$\Gamma$' == p[-1][-1]:
                         print('continue')
                         continue
                 elif len(p) > 1 and not bulk:
                     print('uscire')
                     exit = True
-                    p.append([k_params['point_coords'][point],'$\Gamma$'])
+                    p.append([k_params['point_coords'][point], r'$\Gamma$'])
                     break
                 else:
-                    p.append([k_params['point_coords'][point],'$\Gamma$'])
+                    p.append([k_params['point_coords'][point], r'$\Gamma$'])
 
             else:
                 print(point)
@@ -163,7 +167,7 @@ def QP_bands_interface(node, mapping, only_scissor=Bool(False)):
             'scissor':List([scissor[0],scissor[1],scissor[2]])}
 
 
-def quantumespresso_input_validator(workchain_inputs,overrides={'pw':{}}):
+def quantumespresso_input_validator(workchain_inputs):
     
     messages = []
 
@@ -223,12 +227,6 @@ def quantumespresso_input_validator(workchain_inputs,overrides={'pw':{}}):
         message_scf = 'scf inputs not found, setting defaults'
         messages.append(message_scf)
         scf_params = None
-    #else:
-    #    message_scf = 'scf inputs not found, setting defaults'
-    #    messages.append(message_scf)
-    #    scf_params = scf_params_def
-    #    scf_params['SYSTEM']['nbnd'] = int(scf_params_def['SYSTEM']['nbnd'])
-    #    scf_params = Dict(dict=scf_params)
     
     redo_nscf = False
         
@@ -265,58 +263,25 @@ def quantumespresso_input_validator(workchain_inputs,overrides={'pw':{}}):
         else:
             nscf_params = None
         messages.append(message_nscf)       
-    #else:
-    #    message_nscf = 'nscf inputs not found, setting defaults'
-    #    nscf_params = copy.deepcopy(scf_params.get_dict())
-    #    nscf_params['CONTROL']['calculation'] = nscf_params_def['CONTROL']['calculation']
-    #    nscf_params['SYSTEM']['nbnd'] = int(gwbands)
-    #    nscf_params = Dict(dict=nscf_params)
-    #    messages.append(message_nscf)
-    
-            
-    '''if 'defaults' in message_scf:
-        message_scf_corr='setting scf defaults according to nscf'
-        messages.append(message_scf_corr)
-        scf_params = copy.deepcopy(scf_params.get_dict())
-        bands_scf = scf_params['SYSTEM']['nbnd']
-        scf_params['SYSTEM'] = copy.deepcopy(nscf_params['SYSTEM'])
-        scf_params['CONTROL']['calculation'] = 'scf'
-        scf_params['SYSTEM']['nbnd'] = int(bands_scf)
-        scf_params = Dict(dict=scf_params)'''
-    '''
-    elif 'parent' in message_scf and not 'defaults' in message_nscf and not 'parents' in message_nscf:
-        message_nscf_corr = 'nscf inputs from scf parent'
-        bands = nscf_params.get_dict()['SYSTEM']['nbnd']
-        nscf_params = scf_params.get_dict()
-        nscf_params['CONTROL']['calculation'] = 'nscf'
-        nscf_params['SYSTEM']['nbnd'] = int(bands)
-        nscf_params = Dict(dict=nscf_params)
-        messages.append(message_nscf_corr)
-    '''
-
     
     return scf_params, nscf_params, redo_nscf, gwbands, messages 
 
-def add_corrections(workchain_inputs, additional_parsing_List): #pre proc
+def add_corrections(yambo_parameters:dict, parent_folder:orm.RemoteData, additional_parsing_list:list): #pre proc
     
-    parsing_List = additional_parsing_List
-    qp_list = []
     #take mapping from nscf
-    parent_calc = take_calc_from_remote(workchain_inputs.parent_folder,level=-1)
+    parent_calc = take_calc_from_remote(parent_folder,level=-1)
     try:
         nscf = find_pw_parent(parent_calc, calc_type=['nscf'])
     except:
         nscf = parent_calc
-    mapping = gap_mapping_from_nscf(nscf.pk, additional_parsing_List)
+    mapping = gap_mapping_from_nscf(nscf.pk, additional_parsing_list)
     val = mapping['valence']
     cond = mapping['conduction'] 
     homo_k = mapping['homo_k']
     lumo_k = mapping['lumo_k']
     number_of_kpoints = mapping['number_of_kpoints']
-    sub_val = 3 
-    sup_cond = 3 #so, for now 3+3 bands
 
-    new_params = copy.deepcopy(workchain_inputs.yambo.parameters.get_dict())
+    new_params = copy.deepcopy(yambo_parameters)
     
     QP = []
     if 'QPkrange' in new_params['variables'].keys():
@@ -335,9 +300,9 @@ def add_corrections(workchain_inputs, additional_parsing_List): #pre proc
             QP = [QP[0]]
         except:
             QP = []
-    for name in parsing_List:
+    for name in additional_parsing_list:
         #print('adding ',name,mapping[name])
-        if 'exciton' in parsing_List:
+        if 'exciton' in additional_parsing_list:
             pass
         elif isinstance(name,list) and name[0] in mapping.keys():
             for i in mapping[name[0]]:
@@ -351,25 +316,10 @@ def add_corrections(workchain_inputs, additional_parsing_List): #pre proc
     
         elif name == 'lumo':
             if not [lumo_k,lumo_k, cond,cond] in QP: QP.append([lumo_k,lumo_k, cond,cond])
-        
-        elif name == 'band_structure':
-            #if 'QPkrange' in new_params['variables'].keys() and new_params['variables']['QPkrange'][0][3]-new_params['variables']['QPkrange'][0][2]>0:
-            #    new_params['variables']['QPkrange'][0] = [1,number_of_kpoints, new_params['variables']['QPkrange'][0][2],new_params['variables']['QPkrange'][0][3]]
-            #else:
-                QP = [1,number_of_kpoints, val-sub_val,cond+sup_cond]
-                break
-        
-        elif 'band_structure' in name:    #should provide as 'band_structure_vN_cM', where N, M are the amount of valence and conduction bands included 
-            #if 'QPkrange' in new_params['variables'].keys() and new_params['variables']['QPkrange'][0][3]-new_params['variables']['QPkrange'][0][2]>0:
-            #    new_params['variables']['QPkrange'][0] = [1,number_of_kpoints, new_params['variables']['QPkrange'][0][2],new_params['variables']['QPkrange'][0][3]]
-            #else:
-                QP = [1,number_of_kpoints, val-int(name[-4])+1,cond+int(name[-1])-1]
-                break
-    
 
     if 'QPkrange' in new_params['variables'].keys(): new_params['variables']['QPkrange']= [QP,'']
 
-    return mapping, Dict(new_params)
+    return mapping, new_params
 
 def parse_qp_level(calc, level_map):
 
@@ -407,17 +357,16 @@ def parse_excitons(calc, what): #post proc
         lowest = calc.outputs.array_excitonic_states.get_array('energies')[0]
         return lowest, 1 
 
-def additional_parsed(calc, additional_parsing_List, mapping): #post proc 
+def additional_parsed(calc, additional_parsing_list, mapping): #post proc 
     
     parsed_dict = {}
-    parsing_List = additional_parsing_List
 
     val = mapping['valence']
     cond = mapping['conduction']
     homo_k = mapping['homo_k']
     lumo_k = mapping['lumo_k']
 
-    for what in parsing_List:
+    for what in additional_parsing_list:
         try:
             if isinstance(what,list): 
                 key = what[0]

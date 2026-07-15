@@ -98,6 +98,8 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         NLCC=False,
         RIM_v=False,
         RIM_W=False,
+        ecutwfc=-1,
+        nelectrons=0,
         **_
     ):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
@@ -116,10 +118,10 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
 
         try:
             pw_parent = find_pw_parent(take_calc_from_remote(parent_folder,level=-1))
-            PW_cutoff = pw_parent.inputs.parameters.get_dict()['SYSTEM']['ecutwfc']
+            ecutwfc = pw_parent.inputs.parameters.get_dict()['SYSTEM']['ecutwfc']
             nelectrons = int(pw_parent.outputs.output_parameters.get_dict()['number_of_electrons'])
         except:
-            nelectrons, PW_cutoff = overrides.pop('nelectrons',0), overrides.pop('PW_cutoff',0)
+            pass
 
         # Update the parameters based on the protocol inputs
         parameters = inputs['yambo']['parameters']
@@ -142,11 +144,11 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
             parameters['variables']['RandGvecW'] = [13, 'RL']
 
         #if protocols GW
-        screening_PW_cutoff = int(PW_cutoff*meta_parameters['ratio_PW_cutoff'])
+        screening_PW_cutoff = int(ecutwfc*meta_parameters['ratio_PW_cutoff'])
         screening_PW_cutoff -= screening_PW_cutoff%2 
         parameters['variables']['NGsBlkXp'] = [max(1,screening_PW_cutoff),'Ry']
 
-        parameters['variables']['FFTGvecs'] = [int(PW_cutoff*meta_parameters['ratio_FFTGvecs']),'Ry']
+        parameters['variables']['FFTGvecs'] = [int(ecutwfc*meta_parameters['ratio_FFTGvecs']),'Ry']
         
         bands = int(max(6,nelectrons/2) * meta_parameters['ratio_bands_electrons']) #want something also Volume dependent.
 
@@ -192,11 +194,7 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
             builder.yambo['settings'] = Dict(inputs['yambo']['settings'])
         builder.clean_workdir = Bool(inputs['clean_workdir'])
 
-        if not parent_folder:
-            warnings.warn('You must provide a parent folder calculation, either QE or YAMBO')
-        elif isinstance(parent_folder,str):
-            pass
-        else:
+        if parent_folder:
             builder.parent_folder = parent_folder
         # pylint: enable=no-member
 

@@ -40,7 +40,7 @@ def create_authinfo(computer):
     authinfo = None
     if hasattr(orm_backend, 'construct_backend'):
         backend = orm_backend.construct_backend()
-        authinfo = backend.authinfos.create(
+        authinfo = backend.authconvergence_summary.create(
             computer=computer, user=get_current_user())
     else:
         from aiida.backends.djsite.db.models import DbAuthInfo

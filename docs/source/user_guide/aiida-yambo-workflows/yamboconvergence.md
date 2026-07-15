@@ -100,7 +100,7 @@ In case of converge of FFTGvecs parameters:
 A good convergence journey would be ['FFTGvecs'] -> ['BndsRnXp', 'GbndRnge', 'NGsBlkXp'] -> ['kpoint_mesh'].
 
 The successful workflow will return the results of the convergence iterations, as well as a final converged calculation, from which we can parse the
-converged parameters (they can be also found in the `infos` outputs of the workflow), and a complete story of all the calculations of the workflow with all the information provided.
+converged parameters (they can be also found in the `convergence_summary` outputs of the workflow), and a complete story of all the calculations of the workflow with all the information provided.
 
 
 To show how the convergence algorithm works, here we plot the convergences performed on 2D-hBN imposing a convergence threshold of 1% on the final gap. The convergence is 
@@ -190,10 +190,10 @@ builder.parallelism_instructions = Dict(dict={'automatic' : {
 
 ## Output analysis
 
-The final converged parameters can be obtained from the output node 'infos':
+The final converged parameters can be obtained from the output node 'convergence_summary':
 
 ```python
-    load_node(<pk>).outputs.infos.get_dict()
+    load_node(<pk>).outputs.convergence_summary.get_dict()
 ```
 
 in this way you can obtain something like:
@@ -208,7 +208,7 @@ in this way you can obtain something like:
 }
 ```
 
-You can also access from shell the results by executing the command ``verdi data dict show <pk-of-infos-node>``.
+You can also access from shell the results by executing the command ``verdi data dict show <pk-of-convergence_summary-node>``.
 
 The full convergence history can be parsed using the python Pandas library:
 
