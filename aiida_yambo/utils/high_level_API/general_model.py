@@ -170,7 +170,7 @@ class GeneralInputManager(BaseModel):
         class_instance_ports,
         last_key: str='',
         metadata_keys: list[str]= ['pw','yambo'],
-        keys_to_extract: list[str] = ['scf','nscf','qp','yres'],
+        keys_to_extract: list[str] = ['scf','nscf','qp','bse'],
     ):
         results = {}
         for k,v in class_instance_ports.items():

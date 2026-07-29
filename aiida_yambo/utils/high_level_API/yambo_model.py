@@ -44,7 +44,9 @@ class YamboRestartInputManager(GeneralInputManager):
         if value is not None:
             self.parameters['variables'][name] = value
             
-    def set_Nb(self, setter_tags:list[str]=['BndsRnXs','BndsRnXp','GbndRnge',], value:Union[list, int, float]=None, add_if_not_present:bool=False):
+    def set_Nb(self, 
+               setter_tags:list[Literal['BndsRnXs','BndsRnXp','BndsRnXm','GbndRnge',]]=['BndsRnXp','GbndRnge',], 
+               value:Union[list, int, float]=None, add_if_not_present:bool=True):
         for variant in setter_tags:
             if variant in self.parameters['variables'] or add_if_not_present:
                 if not value:
@@ -56,7 +58,9 @@ class YamboRestartInputManager(GeneralInputManager):
                         value=[value,'']
                 self.set_variable(variant, value)
                 
-    def set_Gcut(self, setter_tags:list[str]=['NGsBlkXs','NGsBlkXp'], value:Union[list, int, float]=None, add_if_not_present:bool=False, units:Literal['Ry', 'RL', 'mRy']='Ry'):
+    def set_Gcut(self, 
+                 setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=['NGsBlkXp'], 
+                 value:Union[list, int, float]=None, add_if_not_present:bool=True, units:Literal['Ry', 'RL', 'mRy']='Ry'):
         for variant in setter_tags:
             if variant in self.parameters['variables'] or add_if_not_present:
                 if not value:
@@ -64,6 +68,10 @@ class YamboRestartInputManager(GeneralInputManager):
                 if isinstance(value, int) or isinstance(value, float):
                     value=[value, units]
                 self.set_variable(variant, value)
+    
+    def set_BSEGcut(self,
+                    setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=['NGsBlkXs','BSENGBlk']):
+        self.set_Gcut(setter_tags=setter_tags)
                 
     def set_BSEbands(self,value:list[int]):
         #value = [v,c]
@@ -96,7 +104,7 @@ class YamboRestartInputManager(GeneralInputManager):
             Nb = Nb if Nb_variant < Nb else Nb_variant
         return Nb
     
-    def get_Gcut(self, search_tags:list[str]=['NGsBlkXs','NGsBlkXp']):
+    def get_Gcut(self, search_tags:list[str]=['NGsBlkXs','NGsBlkXp','BSENGBlk']):
         Gcut = 0
         for variant in search_tags:
             if variant not in self.parameters.get('variables',{}): continue
@@ -109,7 +117,7 @@ class YamboRestartInputManager(GeneralInputManager):
         return self.get_Gcut(search_tags=search_tags)
     
     def get_BSEbands(self,):
-        return self.self.parameters.get('variables',{}).get('BSEbands', None)
+        return self.parameters.get('variables',{}).get('BSEbands', None)
     
     ############ END getter methods ############
 
@@ -131,7 +139,7 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     scf: PwBaseWorkChainInputManager = PwBaseWorkChainInputManager()
     nscf: PwBaseWorkChainInputManager = PwBaseWorkChainInputManager()
     qp: YamboRestartInputManager = YamboRestartInputManager() # only used for QP to be used in a following BSE@QP.
-    yres: YamboRestartInputManager = YamboRestartInputManager() # the standard yambo inputs holder.
+    bse: YamboRestartInputManager = YamboRestartInputManager() # the standard yambo inputs holder.
     
     parent_folder: Optional[Any] = None
     
@@ -146,15 +154,27 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     #### PUT ALSO SETTERS? YES
     @property
     def Nb(self,):
-        return self.yres.get_Nb()
+        return max(self.qp.get_Nb(),self.bse.get_Nb())
+    
+    @property
+    def Nb_qp(self,):
+        return self.qp.get_Nb()
+    
+    @property
+    def Nb_bse(self,):
+        return self.qp.get_Nb()
     
     @property
     def Gcut(self,):
-        return self.yres.get_Gcut()
+        return max(self.qp.get_Gcut(),self.bse.get_Gcut())
     
     @property
-    def BSEGcut(self,):
-        return self.yres.get_BSEGcut()
+    def Gcut_qp(self,):
+        return self.qp.get_Gcut()
+    
+    @property
+    def Gcut_bse(self,):
+        return self.bse.get_BSEGcut()
     
     @property
     def nscf_nbnd(self,):
@@ -166,7 +186,7 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     
     @property
     def has_enough_nbnd(self,):
-        return bool(self.nscf_nbnd >= np.max(self.Nb, self.qp.Nb))
+        return bool(self.nscf_nbnd >= self.Nb)
     
     def set_parent_folder(self,node, update_pw_parameters=False):
         self.parent_folder = node
@@ -200,22 +220,28 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     
     ############ START Redundant SETTER methods for yres easy access ############
     def remove_arguments(self, remove_tags:list[str]=[]):
-        self.yres.remove_arguments(remove_tags)
+        self.qp.remove_arguments(remove_tags)
+        self.bse.remove_arguments(remove_tags)
             
     def set_arguments(self, add_tags:list[str]=[]):
-        self.yres.set_arguments(add_tags)
+        self.qp.set_arguments(add_tags)
+        self.bse.set_arguments(add_tags)
     
     def remove_variables(self, remove_tags:list[str]=[]):
-        self.yres.remove_variables(remove_tags)
+        self.qp.remove_variables(remove_tags)
+        self.bse.remove_variables(remove_tags)
     
     def set_variable(self, name:str='', value:Union[list, int, float]=None):
-        self.yres.set_variable(name, value)
+        self.qp.set_variable(name, value)
+        self.bse.set_variable(name, value)
             
     def set_Nb(self, setter_tags:list[str]=['BndsRnXs','BndsRnXp','GbndRnge',], value:Union[list, int, float]=None, add_if_not_present:bool=False):
-        self.yres.set_Nb(setter_tags, value, add_if_not_present)
+        self.qp.set_Nb(setter_tags, value, add_if_not_present)
+        self.bse.set_Nb(setter_tags, value, add_if_not_present)
                 
     def set_Gcut(self, setter_tags:list[str]=['NGsBlkXs','NGsBlkXp'], value:Union[list, int, float]=None, add_if_not_present:bool=False,units:Literal['Ry', 'RL', 'mRy']='Ry'):
-        self.yres.set_Gcut(setter_tags, value, add_if_not_present,units)
+        self.qp.set_Gcut(setter_tags, value, add_if_not_present,units)
+        self.bse.set_BSEGcut(setter_tags, value, add_if_not_present,units)
     ############ END Redundant SETTER methods for yres easy access ############
 
     ############ START QE setter methods ############
@@ -251,19 +277,19 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     ############ START Redundant GETTER methods for yres easy access ############
     
     def get_variable_value(self, name:str=''):
-        return self.yres.get_variable_value(name)
+        return self.qp.get_variable_value(name)
     
     def get_Nb(self, search_tags:list[str]=['BndsRnXs','BndsRnXp','GbndRnge']):
-        return self.yres.get_Nb(search_tags)
+        return self.qp.get_Nb(search_tags)
     
     def get_Gcut(self, search_tags:list[str]=['NGsBlkXs','NGsBlkXp']):
-        return self.yres.get_Gcut(search_tags)
+        return self.qp.get_Gcut(search_tags)
     
     def get_BSEGcut(self, search_tags:list[str]=['BSENGBlk']):
-        return self.get_Gcut(search_tags=search_tags)
-    
+        return self.bse.get_Gcut(search_tags=search_tags)
+
     def get_BSEbands(self,):
-        self.yres.get_BSEbands()
+        return self.bse.get_BSEbands()
 
     ############ END Redundant GETTER methods for yres easy access ############
 
@@ -284,13 +310,11 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         TODO: generalize this and move it to the base class.
         """
         p = YamboRestartInputManager.to_AiiDA_inputs(self.model_dump(exclude_none=True))
-        p['yres'] = YamboRestartInputManager.to_AiiDA_inputs(self.yres.model_dump(exclude_none=True))
+        p['qp'] = YamboRestartInputManager.to_AiiDA_inputs(self.qp.model_dump(exclude_none=True))
+        p['bse'] = YamboRestartInputManager.to_AiiDA_inputs(self.qp.model_dump(exclude_none=True))
         p['scf'] = YamboRestartInputManager.to_AiiDA_inputs(self.scf.model_dump(exclude_none=True))
         p['nscf'] = YamboRestartInputManager.to_AiiDA_inputs(self.nscf.model_dump(exclude_none=True))
         
-        p['qp'] = YamboRestartInputManager.to_AiiDA_inputs(self.qp.model_dump(exclude_none=True))
-        if not p['qp'].get('yambo',{}).get('code',None):
-            p.pop('qp', None)
         
         from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
         from aiida_yambo.workflows.yamborestart import YamboRestart
@@ -301,10 +325,10 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
             'YamboCalculation':YamboWorkflow,
             'scf': YamboWorkflow,
             'nscf': YamboWorkflow,
-            'YamboRestart': YamboWorkflow,
+            'qp': YamboWorkflow,
             'YamboWorkflow': YamboWorkflow,
             'YamboConvergence': YamboConvergence,
-            'qp': YamboWorkflow,
+            'bse': YamboWorkflow,
         }
         results = YamboRestartInputManager.set_ports(processed_inputs=p, class_instance_ports=class_ob[what].spec().inputs.ports)
         
@@ -318,11 +342,11 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         elif what in ['qp']:
             results = results['qp']
             results['parent_folder'] = p.get('parent_folder',None)
-        elif what in ['YamboRestart']:
-            results = results['yres']
+        elif what in ['bse']:
+            results = results['bse']
             results['parent_folder'] = p.get('parent_folder',None)
         elif what in ['YamboCalculation']:
-            results = results['yres']['yambo']
+            results = results['qp']['yambo']
             results['parent_folder'] = p.get('parent_folder',None)
             
         return results
@@ -371,28 +395,24 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
                 results.update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.yambo, get_metadata=True))
 
             case "YamboWorkflow": 
-                results['yres'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.yres)
-                results['yres'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.yres.yambo, get_metadata=True))
+                results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.qp)
+                results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.qp.yambo, get_metadata=True))
                 results['scf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.scf)
                 results['scf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.scf.pw, get_metadata=True))
                 results['nscf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.nscf)
                 results['nscf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.nscf.pw, get_metadata=True))
                 
-                if hasattr(inputs,'qp'):
-                    if hasattr(inputs.qp.yambo, 'parameters'): # these means that is was indeed set
-                        results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.qp)
-                        results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.qp.yambo, get_metadata=True))
+                results['bse'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.bse)
+                results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.bse.yambo, get_metadata=True))
 
             case "YamboConvergence":
-                results['yres'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.yres)
-                results['yres'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.yres.yambo, get_metadata=True))
+                results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp)
+                results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp.yambo, get_metadata=True))
                 results['scf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf)
                 results['scf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf.pw, get_metadata=True))
                 results['nscf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf)
                 results['nscf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf.pw, get_metadata=True))
                 
-                if hasattr(inputs.ywfl,'qp'):
-                    if hasattr(inputs.ywfl.qp.yambo, 'parameters'): # these means that is was indeed set
-                        results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp)
-                        results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp.yambo, get_metadata=True))               
+                results['bse'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse)
+                results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse.yambo, get_metadata=True))               
         return results
