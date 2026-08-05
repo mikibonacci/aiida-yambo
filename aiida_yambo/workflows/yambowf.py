@@ -59,18 +59,25 @@ def sanity_check_QP(v,c,input_db,output_db,create=True):
     c_cond = np.where((d.QP_table[0] >= c) & (abs(d.QP_E[:,0]-d.QP_Eo[:])*units.Ha<5))
 
     #fix with a fit
-    fit_v = np.polyfit(d.QP_Eo[v_cond[0]],d.QP_E[v_cond[0],0],deg=1)
-    fit_c = np.polyfit(d.QP_Eo[c_cond[0]],d.QP_E[c_cond[0],0],deg=1)
+    # a linear fit requires at least 2 points; if the band region is missing we return None for the fit.
+    fit_v = np.polyfit(d.QP_Eo[v_cond[0]],d.QP_E[v_cond[0],0],deg=1) if len(v_cond[0]) >= 2 else None
+    fit_c = np.polyfit(d.QP_Eo[c_cond[0]],d.QP_E[c_cond[0],0],deg=1) if len(c_cond[0]) >= 2 else None
     for i in wrong[0]:
         print(d.QP_Eo[i].data*units.Ha,d.QP_E[i,0].data*units.Ha)
         if d.QP_table[0,i]>v:
-            d.QP_E[i,0] = fit_c[0]*d.QP_Eo[i]+fit_c[1]
+            fit = fit_c
         else:
-            d.QP_E[i,0] = fit_v[0]*d.QP_Eo[i]+fit_v[1]
+            fit = fit_v
+        if fit is None:
+            print('no {} fit available, leaving QP for band {} unchanged'.format(
+                'conduction' if d.QP_table[0,i]>v else 'valence', int(d.QP_table[0,i])))
+            continue
+        d.QP_E[i,0] = fit[0]*d.QP_Eo[i]+fit[1]
     
     #align to zero wrt to the maximum of valence... fixes the error in Fermi re-evaluation
     #in the BSE RD/ndb.QP. for now.
-    d.QP_E[:,0] = d.QP_E[:,0] - np.max(d.QP_E[v_cond[0],0])
+    if len(v_cond[0]) > 0:
+        d.QP_E[:,0] = d.QP_E[:,0] - np.max(d.QP_E[v_cond[0],0])
     
     if create: d.to_netcdf(output_db)
 
@@ -119,10 +126,14 @@ def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_
             print(string_run)
             os.system(string_run)
             time.sleep(10)
-            qp_fixed = sanity_check_QP(valence,conduction,dirpath+'/'+output_name.value,dirpath+'/'+output_name.value.replace('merged','fixed'))
-            QP_db = SingleFileData(qp_fixed[0])
+            qp_fixed,fit_v,fit_c = sanity_check_QP(valence,conduction,dirpath+'/'+output_name.value,dirpath+'/'+output_name.value.replace('merged','fixed'))
+            QP_db = SingleFileData(qp_fixed)
 
-            return QP_db
+            return {
+                'QP_db': QP_db,
+                'has_valence': orm.Bool(fit_v is not None),
+                'has_conduction': orm.Bool(fit_c is not None),
+            }
         
         return
 
@@ -367,6 +378,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                              message='The workchain failed with an unrecoverable error.')
         spec.exit_code(301, 'ERROR_SPLITTED_QP_FAILED',
                              message='The workchain failed with an unrecoverable error.')
+        spec.exit_code(302, 'ERROR_MISSING_BAND_REGION',
+                             message='The merged QP database does not contain both valence and conduction states.')
     
     @classmethod
     def get_protocol_filepath(cls):
@@ -556,6 +569,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         )
         self.ctx.input_manager = YamboInputManager(**input_manager)
         
+        self.ctx.number_of_subsets = 0
         self.ctx.should_run_QP = False
         self.ctx.should_run_bse = False
         self.ctx.just_initialise = self.ctx.input_manager.qp.settings.get('INITIALISE', False) or self.ctx.input_manager.bse.settings.get('INITIALISE', False)
@@ -777,7 +791,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
                 #self.report('subsets: {}'.format(self.ctx.input_manager.QP_subsets_dict['subsets']))
                 
-            number_of_subsets = len(self.ctx.input_manager.QP_subsets_dict['subsets'])
+            if self.ctx.number_of_subsets == 0:
+                self.ctx.number_of_subsets = len(self.ctx.input_manager.QP_subsets_dict['subsets'])
 
             for i in range(1,1+self.ctx.input_manager.QP_subsets_dict['parallel_runs']):
                 if len(self.ctx.input_manager.QP_subsets_dict['subsets']) > 0:
@@ -791,7 +806,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                         what='qp'
                     yambo_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what=what)
                     future = self.submit(YamboRestart, **yambo_inputs)
-                    self.report('Launching YamboRestart <{}> for QP, iteration #{} of {}'.format(future.pk,i+self.ctx.qp_splitter, number_of_subsets))
+                    self.report('Launching YamboRestart <{}> for QP, iteration #{} of {}'.format(future.pk,i+self.ctx.qp_splitter, self.ctx.number_of_subsets))
                     self.ctx.splitted_QP.append(future.uuid)
                     key = f'qp_splitted_{i + self.ctx.qp_splitter}'
                     qp_futures[key] = future
@@ -830,14 +845,24 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         
         self.ctx.input_manager.QP_subsets_dict['extend_db'] = self.ctx.input_manager.QP_subsets_dict.pop('extend_db',False)
 
-        self.ctx.QP_db = merge_QP(
+        merge_result = merge_QP(
             splitted,
             output_name,
             orm.Int(self.ctx.calc.pk),
             qp_settings=orm.Dict(dict=self.ctx.input_manager.QP_subsets_dict),
             already_computed_QP_db = self.inputs.get('already_computed_QP_db',orm.List([]))
             )
+        self.ctx.QP_db = merge_result['QP_db']
         self.out('merged_QP',self.ctx.QP_db)
+
+        # we need both valence and conduction states to proceed (BSE, extended QP db...):
+        has_valence = merge_result['has_valence'].value
+        has_conduction = merge_result['has_conduction'].value
+        if not has_valence or not has_conduction and self.ctx.should_run_bse:
+            missing = 'valence and conduction' if not has_valence and not has_conduction \
+                else ('conduction' if not has_conduction else 'valence')
+            self.report('The merged QP database does not contain {} states, exiting the workflow'.format(missing))
+            return self.exit_codes.ERROR_MISSING_BAND_REGION
         
         # Extend QP is requested:
         if self.ctx.input_manager.QP_subsets_dict['extend_db']:
@@ -923,7 +948,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 self.out('output_ywfl_parameters', store_Dict(parsed))
             elif hasattr(self.ctx, 'BSE_map'):
                 mapping, yambo_parameters = add_corrections(
-                    self.ctx.input_manager.parameters, 
+                    self.ctx.input_manager.qp.parameters, 
                     self.ctx.calc.outputs.remote_folder,
                     [])
                 mapping_Dict = store_Dict(mapping)

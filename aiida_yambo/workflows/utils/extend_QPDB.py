@@ -50,8 +50,8 @@ def build_ndbQP(db_path,DFT_pk,Nb=[1,1],Nk=1,verbose=False):
     
     v_cond = np.where((db.QP_table[0] == v) & (abs(db.QP_E[:,0]-db.QP_Eo[:])*units.Ha<5))
     c_cond = np.where((db.QP_table[0] == c) & (abs(db.QP_E[:,0]-db.QP_Eo[:])*units.Ha<5))
-    fit_v = np.polyfit(db.QP_Eo[v_cond[0]],db.QP_E[v_cond[0],0],deg=1)
-    fit_c = np.polyfit(db.QP_Eo[c_cond[0]],db.QP_E[c_cond[0],0],deg=1)
+    fit_v = np.polyfit(db.QP_Eo[v_cond[0]],db.QP_E[v_cond[0],0],deg=1) if len(v_cond[0]) >= 2 else None
+    fit_c = np.polyfit(db.QP_Eo[c_cond[0]],db.QP_E[c_cond[0],0],deg=1) if len(c_cond[0]) >= 2 else None
     
     QP = np.zeros((Nk*len(Nb),2))
     Z = np.zeros((Nk*len(Nb),2))
@@ -111,6 +111,9 @@ def update_FD_and_scissor(db_dft,db_gw,conduction,mu,scissors=[[1,0],[1,0]],e_re
     '''
     dss = db_dft
     
+    # a missing fit means no scissor: keep the DFT/KS value.
+    scissors = [(s if s is not None else [1, 0]) for s in scissors]
+    
     #update the qp where possible, so we introduce the QP that we have in db:
     for i in range(len(db_gw.QP_table[0,:])):
         b=int(db_gw.QP_table.data[0,i])
@@ -153,11 +156,19 @@ def FD_and_scissored_db(out_db_path,pw,Nb,Nk,v_max,c_min,fit_v,fit_c,conduction,
     v_ref = np.where((out_db.QP_table[0].isin([v_max])))
     c_ref = np.where((out_db.QP_table[0].isin([c_min])))
     
-    v_ref_max = (max(out_db.QP_Eo.data[v_ref]*units.Ha)+min(out_db.QP_Eo.data[v_ref]*units.Ha))/2
-    c_ref_min = (max(out_db.QP_Eo.data[c_ref]*units.Ha)+min(out_db.QP_Eo.data[c_ref]*units.Ha))/2
+    v_ref_max = (max(out_db.QP_Eo.data[v_ref]*units.Ha)+min(out_db.QP_Eo.data[v_ref]*units.Ha))/2 if len(v_ref[0]) > 0 else None
+    c_ref_min = (max(out_db.QP_Eo.data[c_ref]*units.Ha)+min(out_db.QP_Eo.data[c_ref]*units.Ha))/2 if len(c_ref[0]) > 0 else None
     
-    if not e_ref: e_ref = (c_ref_min+v_ref_max)/2
-    if not mu: mu = (c_ref_min-v_ref_max)/2
+    if not e_ref:
+        if v_ref_max is not None and c_ref_min is not None:
+            e_ref = (c_ref_min+v_ref_max)/2
+        else:
+            e_ref = c_ref_min if c_ref_min is not None else (v_ref_max if v_ref_max is not None else 0)
+    if not mu:
+        if v_ref_max is not None and c_ref_min is not None:
+            mu = (c_ref_min-v_ref_max)/2
+        else:
+            mu = 0
 
     
     db_final = update_FD_and_scissor(db_dft = db_dft[0],
