@@ -329,7 +329,7 @@ def parse_qp_level(calc, level_map):
 
     level_gw = (level_dft + level_corr)*27.2114
 
-    return level_gw, level_dft*27.2114
+    return np.round(level_gw,4), np.round(level_dft*27.2114,4)
 
 def parse_qp_gap(calc, gap_map): #post proc 
 
@@ -345,17 +345,17 @@ def parse_qp_gap(calc, gap_map): #post proc
 
 
 
-    return _cb_level_gw-_vb_level_gw, _cb_level_dft*27.2114-_vb_level_dft*27.2114
+    return np.round(_cb_level_gw-_vb_level_gw,4), np.round(_cb_level_dft*27.2114-_vb_level_dft*27.2114, 4)
 
 def parse_excitons(calc, what): #post proc 
 
     if what == 'brightest':
         index = calc.outputs.array_excitonic_states.get_array('intensities').argmax()
         brightest = calc.outputs.array_excitonic_states.get_array('energies')[index]
-        return brightest, index+1
+        return np.round(brightest, 4), index+1
     elif what == 'lowest':
         lowest = calc.outputs.array_excitonic_states.get_array('energies')[0]
-        return lowest, 1 
+        return np.round(lowest, 4), 1 
 
 def additional_parsed(calc, additional_parsing_list, mapping): #post proc 
     

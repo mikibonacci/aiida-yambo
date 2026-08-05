@@ -40,6 +40,9 @@ class GeneralInputManager(BaseModel):
     
     """General input manager, can be used for different objects: QuantumESPRESSO, Yambo...
     
+    NOTE: the fields should not be AiiDA nodes, but the counterparts in python... 
+    ...so the self.ctx will not except if a node is not stored but is in this object
+    
     """
     
     parameters: dict = {}
@@ -163,6 +166,12 @@ class GeneralInputManager(BaseModel):
                 results[k] = v
             
         return results
+
+    @staticmethod
+    def _has_provided_inputs(manager) -> bool:
+        data = manager.model_dump(exclude_none=True)
+        data.pop('metadata', None)
+        return any(v not in ({}, None) for v in data.values())
 
     @staticmethod
     def set_ports(

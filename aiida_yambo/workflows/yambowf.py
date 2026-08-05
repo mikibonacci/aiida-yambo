@@ -308,10 +308,14 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         #spec.expose_inputs(YamboRestart, namespace='yres', namespace_options={'required': False,'populate_defaults': False}, 
         #                    exclude = ['parent_folder'])
         
-        spec.expose_inputs(YamboRestart, namespace='qp', namespace_options={'required': False,'populate_defaults': False, 'help': 'QP inputs only if BSE@GW is asked, i.e. we also provide `QP_subsets_dict`'}, 
+        spec.expose_inputs(YamboRestart, namespace='qp', 
+                           namespace_options={'required': False,'populate_defaults': False, 
+                                              'help': 'inputs for GW and QP if BSE@GW is asked, i.e. we also provide `QP_subsets_dict`'}, 
                             exclude = ['parent_folder'])
         
-        spec.expose_inputs(YamboRestart, namespace='bse', namespace_options={'required': False,'populate_defaults': False, 'help': 'QP inputs only if BSE@GW is asked, i.e. we also provide `QP_subsets_dict`'}, 
+        spec.expose_inputs(YamboRestart, namespace='bse', 
+                           namespace_options={'required': False,'populate_defaults': False, 
+                                              'help': 'inputs for BSE.`'}, 
                             exclude = ['parent_folder'])
         
         spec.input("additional_parsing", valid_type=orm.List, required = False,
@@ -424,6 +428,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         ######### SCF and NSCF INPUTS/PROTOCOLS #########
         
         # try to get the pw builders from the scf and nscf parents if any
+        builder_scf, builder_nscf = None, None
         if parent_folder is not None:
             from aiida_yambo.utils.common_helpers import get_pw_inputs_builders
             builder_scf, builder_nscf = get_pw_inputs_builders(parent_folder)
@@ -555,14 +560,24 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         self.ctx.should_run_bse = False
         self.ctx.just_initialise = self.ctx.input_manager.qp.settings.get('INITIALISE', False) or self.ctx.input_manager.bse.settings.get('INITIALISE', False)
                        
-        # we switch the yres <---> qp inputs so first we do QP, and then yres (which is BSE in this specific case).
-        if len(self.ctx.input_manager.bse.parameters) > 0 and len(self.ctx.input_manager.QP_subsets_dict) > 0 and not self.ctx.just_initialise:
-            self.ctx.should_run_bse = True if self.ctx.input_manager.qp.parameters.get('variables', None) else False
-            self.ctx.should_run_QP = self.ctx.should_run_bse
-        elif len(self.ctx.input_manager.bse.parameters) == 0 and len(self.ctx.input_manager.QP_subsets_dict) > 0 and not self.ctx.just_initialise: 
+        # Determine workflow mode
+        has_qp_inputs = len(self.ctx.input_manager.qp.parameters) > 0
+        has_bse_inputs = len(self.ctx.input_manager.bse.parameters) > 0
+        has_qp_subsets = len(self.ctx.input_manager.QP_subsets_dict) > 0
+        just_init = self.ctx.just_initialise
+
+        self.ctx.should_run_QP = False
+        self.ctx.should_run_bse = False
+
+        if just_init:
+            pass  # neither will run
+        elif has_qp_inputs and has_bse_inputs and has_qp_subsets:
+            self.ctx.should_run_QP = bool(
+                self.ctx.input_manager.qp.parameters.get('variables', None))
+            self.ctx.should_run_bse = self.ctx.should_run_QP
+        elif has_qp_inputs and has_qp_subsets:
             self.ctx.should_run_QP = True
-        elif len(self.ctx.input_manager.qp.parameters) == 0 and len(self.ctx.input_manager.bse.parameters) > 0:
-            self.ctx.should_run_QP = False
+        elif has_bse_inputs and not has_qp_inputs:
             self.ctx.should_run_bse = True
         
         if not hasattr(self.ctx.input_manager, 'parent_folder'):
@@ -673,8 +688,13 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     self.ctx.input_manager.additional_parsing,
                 )
                 self.ctx.mapping = mapping
-                self.ctx.input_manager.parameters = yambo_parameters
-            self.ctx.input_manager.yres.metadata.call_link_label = self.ctx.calc_to_do
+                self.ctx.input_manager.qp.parameters = yambo_parameters
+            match c_name:
+                case 'qp':
+                    self.ctx.input_manager.qp.metadata.call_link_label = self.ctx.calc_to_do
+                case 'bse':
+                    self.ctx.input_manager.bse.metadata.call_link_label = self.ctx.calc_to_do
+
             self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
             yambo_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what=self.ctx.calc_to_do)
             future = self.submit(YamboRestart, **yambo_inputs)
@@ -686,13 +706,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 self.ctx.calc_to_do = 'The workflow is finished'
         
         elif self.ctx.calc_to_do == 'QP splitter': # This is the multiple QP runs which will then be merged with yambopy
-            
-            QP = {}
-            
-            for k,v in QP.items():
-                if not QP[k].is_finished_ok:
-                    self.report('some calculation failed')
-                    return self.exit_codes.ERROR_WORKCHAIN_FAILED
+
+            qp_futures = {}
 
             # If this is the first QP iteration, we set the parent and all the needed inputs.
             if self.ctx.qp_splitter == 0:
@@ -709,19 +724,19 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 if self.ctx.should_run_bse:
                     self.ctx.input_manager.qp.settings['COPY_DBS'] = True
                 else:
-                    self.ctx.input_manager.yres.settings['COPY_DBS'] = True
+                    self.ctx.input_manager.qp.settings['COPY_DBS'] = True
 
                 # setting some specific configuration:
                 if 'parallelism' in self.ctx.input_manager.QP_subsets_dict:
                     for k,v in self.ctx.input_manager.QP_subsets_dict['parallelism'].items():
-                        self.ctx.input_manager.set_variable(name=k, value=v)
+                        self.ctx.input_manager.qp.set_variable(name=k, value=v)
                 if 'resources' in self.ctx.input_manager.QP_subsets_dict:
                     self.ctx.input_manager.metadata.options.resources = self.ctx.input_manager.QP_subsets_dict['resources']
                 if 'prepend_text' in self.ctx.input_manager.QP_subsets_dict:
                     self.ctx.input_manager.metadata.options.prepend_text = self.ctx.input_manager.QP_subsets_dict['prepend_text']
                 
 
-                self.ctx.input_manager.clean_workdir = orm.Bool(True)
+                self.ctx.input_manager.clean_workdir = True # AAA: we do not set orm.Bool(True), as the generate_AiiDA_inputs will create the AiiDA nodes needed: otherwise, it will be in the ctx, but not stored: it will except.
                 mapping = gap_mapping_from_nscf(find_pw_parent(take_calc_from_remote(self.ctx.calc.outputs.remote_folder,level=-1)).pk)
                 self.ctx.mapping = mapping
 
@@ -761,22 +776,25 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                                                                         consider_only=consider_only)
 
                 #self.report('subsets: {}'.format(self.ctx.input_manager.QP_subsets_dict['subsets']))
+                
+            number_of_subsets = len(self.ctx.input_manager.QP_subsets_dict['subsets'])
 
             for i in range(1,1+self.ctx.input_manager.QP_subsets_dict['parallel_runs']):
                 if len(self.ctx.input_manager.QP_subsets_dict['subsets']) > 0:
-                    self.ctx.input_manager.parameters.set_variable(name='QPkrange', value=[[self.ctx.input_manager.QP_subsets_dict['subsets'].pop(),'']])
-                    self.ctx.input_manager.metadata.call_link_label = 'yambo_QP_splitted_{}'.format(i+self.ctx.qp_splitter)
-                    self.ctx.input_manager.set_parent_folder = self.ctx.calc.outputs.remote_folder
+                    self.ctx.input_manager.qp.set_variable(name='QPkrange', value=[self.ctx.input_manager.QP_subsets_dict['subsets'].pop(),''])
+                    self.ctx.input_manager.qp.metadata.call_link_label = 'yambo_QP_splitted_{}'.format(i+self.ctx.qp_splitter)
+                    self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
                     if self.ctx.should_run_QP and self.ctx.should_run_bse:
                         # if run bse@QP, it means that we need to run the qp using the qp inputs.
                         what='qp'
                     else:
-                        what='YamboRestart'
+                        what='qp'
                     yambo_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what=what)
                     future = self.submit(YamboRestart, **yambo_inputs)
-                    self.report('Launching YamboRestart <{}> for QP, iteration#{} of {}'.format(future.pk,i+self.ctx.qp_splitter, len(self.ctx.input_manager.QP_subsets_dict['subsets'])))
+                    self.report('Launching YamboRestart <{}> for QP, iteration #{} of {}'.format(future.pk,i+self.ctx.qp_splitter, number_of_subsets))
                     self.ctx.splitted_QP.append(future.uuid)
-                    QP[str(i+1)] = future
+                    key = f'qp_splitted_{i + self.ctx.qp_splitter}'
+                    qp_futures[key] = future
                 else:
                     self.ctx.calc_to_do = 'The workflow is finished'
             
@@ -784,7 +802,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
             if len(self.ctx.input_manager.QP_subsets_dict['subsets']) == 0: self.ctx.calc_to_do = 'The workflow is finished'
 
-            return ToContext(QP) #wait for all splitted calculations....
+            return ToContext(**qp_futures) #wait for all splitted calculations....
 
         return ToContext(calc = future)
     
@@ -883,7 +901,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             if hasattr(self.inputs, 'additional_parsing'):
                 #self.report('parsing additional quantities')
                 mapping, yambo_parameters = add_corrections(
-                    self.ctx.input_manager.parameters, 
+                    self.ctx.input_manager.qp.parameters, 
                     self.ctx.calc.outputs.remote_folder,
                     self.ctx.input_manager.additional_parsing,
                 )

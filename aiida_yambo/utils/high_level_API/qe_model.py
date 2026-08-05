@@ -29,7 +29,7 @@ class PwBaseWorkChainInputManager(GeneralInputManager):
     def set_pseudo_family(self, value:str):
         from aiida import orm
         family = orm.load_group(value)
-        self.pseudos = family.get_pseudos(structure=self.scf.pw.structure)
+        self.pseudos = family.get_pseudos(structure=self.structure)
     
     def set_kmesh(self, value:list=[1,1,1], shift:list=[0,0,0]):
         from aiida import orm
@@ -40,7 +40,7 @@ class PwBaseWorkChainInputManager(GeneralInputManager):
     def set_k_inverse_distance(self, value:float=1.0, force_parity=True):
         from aiida import orm
         self.kpoints = orm.KpointsData()
-        self.kpoints.set_cell_from_structure(self.pw.structure)
+        self.kpoints.set_cell_from_structure(self.structure)
         self.kpoints.set_kpoints_mesh_from_density(1.0 / value, force_parity=force_parity)
         
     def set_gamma_only(self):
@@ -64,10 +64,10 @@ class PwBaseWorkChainInputManager(GeneralInputManager):
         return self.parameters.get('SYSTEM',{}).get('ecutwfc',-1)
         
     def get_mesh(self,) -> list[list]:
-        return self.parameters.kpoints.get_kpoints_mesh()
+        return self.kpoints.get_kpoints_mesh()
     
     def get_kpoints_distance(self,) -> float:
-        return self.parameters.kpoints_distance.value
+        return self.kpoints_distance.value
     
     ############ END QE getter methods ############
     

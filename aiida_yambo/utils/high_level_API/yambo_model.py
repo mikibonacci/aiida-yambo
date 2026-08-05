@@ -162,7 +162,7 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     
     @property
     def Nb_bse(self,):
-        return self.qp.get_Nb()
+        return self.bse.get_Nb()
     
     @property
     def Gcut(self,):
@@ -309,11 +309,14 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         
         TODO: generalize this and move it to the base class.
         """
-        p = YamboRestartInputManager.to_AiiDA_inputs(self.model_dump(exclude_none=True))
-        p['qp'] = YamboRestartInputManager.to_AiiDA_inputs(self.qp.model_dump(exclude_none=True))
-        p['bse'] = YamboRestartInputManager.to_AiiDA_inputs(self.qp.model_dump(exclude_none=True))
-        p['scf'] = YamboRestartInputManager.to_AiiDA_inputs(self.scf.model_dump(exclude_none=True))
-        p['nscf'] = YamboRestartInputManager.to_AiiDA_inputs(self.nscf.model_dump(exclude_none=True))
+        p = YamboRestartInputManager.to_AiiDA_inputs(
+            self.model_dump(exclude_none=True, exclude={'scf', 'nscf', 'qp', 'bse'})
+        )
+        for key, manager in (('qp', self.qp), ('bse', self.bse),
+                             ('scf', self.scf), ('nscf', self.nscf)):
+            sub_inputs = YamboRestartInputManager.to_AiiDA_inputs(manager.model_dump(exclude_none=True))
+            if sub_inputs and GeneralInputManager._has_provided_inputs(manager):
+                p[key] = sub_inputs
         
         
         from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
@@ -395,24 +398,30 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
                 results.update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.yambo, get_metadata=True))
 
             case "YamboWorkflow": 
-                results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.qp)
-                results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.qp.yambo, get_metadata=True))
-                results['scf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.scf)
-                results['scf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.scf.pw, get_metadata=True))
-                results['nscf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.nscf)
-                results['nscf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.nscf.pw, get_metadata=True))
-                
-                results['bse'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.bse)
-                results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.bse.yambo, get_metadata=True))
+                if 'qp' in inputs:
+                    results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.qp)
+                    results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.qp.yambo, get_metadata=True))
+                if 'scf' in inputs:
+                    results['scf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.scf)
+                    results['scf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.scf.pw, get_metadata=True))
+                if 'nscf' in inputs:
+                    results['nscf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.nscf)
+                    results['nscf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.nscf.pw, get_metadata=True))
+                if 'bse' in inputs:
+                    results['bse'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.bse)
+                    results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.bse.yambo, get_metadata=True))
 
             case "YamboConvergence":
-                results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp)
-                results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp.yambo, get_metadata=True))
-                results['scf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf)
-                results['scf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf.pw, get_metadata=True))
-                results['nscf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf)
-                results['nscf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf.pw, get_metadata=True))
-                
-                results['bse'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse)
-                results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse.yambo, get_metadata=True))               
+                if 'qp' in inputs.ywfl:
+                    results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp)
+                    results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp.yambo, get_metadata=True))
+                if 'scf' in inputs.ywfl:
+                    results['scf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf)
+                    results['scf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf.pw, get_metadata=True))
+                if 'nscf' in inputs.ywfl:
+                    results['nscf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf)
+                    results['nscf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf.pw, get_metadata=True))
+                if 'bse' in inputs.ywfl:
+                    results['bse'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse)
+                    results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse.yambo, get_metadata=True))
         return results
