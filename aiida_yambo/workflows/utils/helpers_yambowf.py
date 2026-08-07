@@ -499,6 +499,31 @@ def QP_analyzer(pk,QP_db,mapping):
         soc = mapping['soc']
         where_v = np.where(db.QP_table[0,:] <= v)
         where_c = np.where(db.QP_table[0,:] >= c)
+
+        missing_region = None
+        if len(where_v[0]) == 0 and len(where_c[0]) == 0:
+            missing_region = 'valence and conduction'
+        elif len(where_v[0]) == 0:
+            missing_region = 'valence'
+        elif len(where_c[0]) == 0:
+            missing_region = 'conduction'
+
+        if missing_region is not None:
+            print('WARNING: no {} states in the merged QP database, returning a partial BSE map'.format(missing_region))
+            BSE_mapper = {
+                'nscf_pk': find_pw_parent(ywfl).pk,
+                'v_min': int(db.QP_table[0,:].min().values),
+                'c_max': int(db.QP_table[0,:].max().values),
+                'q_ind': None,
+                'GW_k_v_ind': None,
+                'GW_k_c_ind': None,
+                'candidate_for_BSE': False,
+                'gap_GW': None,
+                'QP_pk': QP_db.pk,
+                'SOC': soc,
+                'missing_region': missing_region,
+            }
+            return BSE_mapper
         
         v_min = db.QP_table[0,:].min()
         c_max = db.QP_table[0,:].max()
@@ -530,14 +555,17 @@ def QP_analyzer(pk,QP_db,mapping):
             
         so it is needed.
         """
-        if len(k_v) > 1: k_v=k_v.values[0]
-        if len(k_c) > 1: k_c=k_c.values[0]
+        if len(k_v) > 1: 
+            k_v=k_v.values[0]
+        else:
+            k_v = np.asarray(k_v.values).reshape(-1)[0]
+        if len(k_c) > 1: 
+            k_c=k_c.values[0]
+        else:
+            k_c = np.asarray(k_c.values).reshape(-1)[0]
 
         k_coord_v = k_mesh[int(k_v)-1]
         k_coord_c = k_mesh[int(k_c)-1]
-        
-        print(k_v.values,k_c.values)
-        print(k_coord_v,k_coord_c)
         
         delta_k = abs(abs(k_coord_c)-abs(k_coord_v))
         print(delta_k)
@@ -562,6 +590,7 @@ def QP_analyzer(pk,QP_db,mapping):
             #'gap_DFT':np.round(dft_gap.values,4),
             'QP_pk':QP_db.pk,
             'SOC':soc,
+            'missing_region': None,
         
         }
         

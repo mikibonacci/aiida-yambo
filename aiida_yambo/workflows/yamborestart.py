@@ -153,12 +153,13 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         bands = int(max(6,nelectrons/2) * meta_parameters['ratio_bands_electrons']) #want something also Volume dependent.
 
         parameters['variables']['BndsRnXp'] = [[1, bands], '']
-        parameters['variables']['GbndRnge'] = parameters['variables']['BndsRnXp']
 
         if 'bse' in protocol:
             parameters['variables']['BndsRnXs'] = parameters['variables'].pop('BndsRnXp')
             parameters['variables']['NGsBlkXs'] = parameters['variables'].pop('NGsBlkXp')
             parameters['variables']['BSENGBlk'] = parameters['variables']['NGsBlkXs']
+        else:
+            parameters['variables']['GbndRnge'] = parameters['variables']['BndsRnXp']
 
         # If overrides are provided, they are considered absolute
         if overrides:

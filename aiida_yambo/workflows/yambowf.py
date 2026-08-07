@@ -333,7 +333,71 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     help = 'list of additional quantities to be parsed: gap, homo, lumo, or used defined quantities -with names-[k1,k2,b1,b2], [k1,b1], gap_GG, lowest_exciton')
         
         spec.input("QP_subsets_dict", valid_type=orm.Dict, required = False,
-                    help = 'subset of QP that you want to compute, useful if you need to obtain a large number of QP corrections')
+                    help = 'QP_subsets_dict: how to define which quasi-particles (QP) to compute.\n'
+                    'The QP splitter runs `parallel_runs` YamboRestart calculations at a time, each\n'
+                    'on a subset of the requested QP range (set as QPkrange), then merges all the\n'
+                    'ndb.QP databases with yambopy (`merge_QP`). `QP_subsets_dict` defines both the\n'
+                    'subsets and the parallelism.\n'
+                    '\n'
+                    'REQUIRED KEYS (always):\n'
+                    '    parallel_runs : int\n'
+                    '        how many YamboRestart to submit at once; the splitter iterates until\n'
+                    '        all subsets are consumed.\n'
+                    '    qp_per_subset : int\n'
+                    '        how many QP (k-point, band) pairs per subset.\n'
+                    '\n'
+                    'SUBSET SOURCES (provide exactly one):\n'
+                    '    1. boundaries : dict, explicit band range for ALL k-points\n'
+                    '           { \'bi\': int, \'bf\': int, \'ki\': int (opt, default 1),\n'
+                    "             'kf': int (opt, default nk) }\n"
+                    '       bi/bf are required; ki/kf default to the full k-grid. Equivalent to\n'
+                    '       QP_list_merger([[ki, kf, bi, bf]], qp_per_subset, ...).\n'
+                    '\n'
+                    '    2. range_QP : float (eV), automatic band selection around the gap\n'
+                    '       Uses QP_mapper() to pick the bands within `range_QP` of mid-gap for all\n'
+                    "       k-points; populates the 'explicit' and 'scissored' keys automatically.\n"
+                    '           - full_bands (opt): also run QP on all bands between the selected\n'
+                    '             b_min and b_max (QP_mapper full_bands=True).\n'
+                    '           - range_spectrum (opt): eV window used to define the scissored\n'
+                    '             [b_min, b_max] range used later for BSE BSEBands.\n'
+                    '\n'
+                    '    3. explicit : list of [k1, k2, b1, b2] ranges\n'
+                    '       Directly specify the QP windows; merged into subsets with QP_list_merger.\n'
+                    '\n'
+                    "    If none of the three is given, no 'subsets' key is created and the\n"
+                    '    workflow crashes with a KeyError.\n'
+                    '\n'
+                    'OPTIONAL KEYS:\n'
+                    '    consider_only : list of bands, default [-1] (all)\n'
+                    '        only include QP whose band is in the list (or all if [-1]).\n'
+                    '    parallelism : dict\n'
+                    '        extra yambo parallelism variables set on each splitted run\n'
+                    '    resources : dict\n'
+                    '        overrides the metadata.options.resources for the splitted runs.\n'
+                    '    prepend_text : str\n'
+                    '        overrides metadata.options.prepend_text for the splitted runs.\n'
+                    '    extend_db : bool, default False\n'
+                    '        if True, after the merge, run extend_QP() to build a scissored +\n'
+                    '        Fermi-Dirac smeared extended QP database; extra keys:\n'
+                    '            Nb          : [1, b_max] band range for the extended db\n'
+                    '                          (default [1, valence + conduction])\n'
+                    '            T_smearing  : smearing in eV for the FD corrections\n'
+                    '                          (default 1e-2)\n'
+                    '            consider_only : [v_min, c_max] used to set the scissor window\n'
+                    '    already_computed_QP_db (workflow input, not a dict key):\n'
+                    '        orm.List of ndb.QP database pks already computed; those QP are skipped\n'
+                    '        when building the subsets (see check_already_computed).\n'
+                    '\n'
+                    'EXAMPLES:\n'
+                    "    # all k-points, bands bi..bf, 10 QP per subset, 3 runs at a time:\n"
+                    "    {'boundaries': {'bi': 29, 'bf': 32}, 'parallel_runs': 3, 'qp_per_subset': 10}\n"
+                    '\n'
+                    "    # automatic selection within 1.2 eV of mid-gap:\n"
+                    "    {'range_QP': 1.2, 'parallel_runs': 3, 'qp_per_subset': 10}\n"
+                    '\n'
+                    "    # explicit windows:\n"
+                    "    {'explicit': [[1, 1, 29, 29], [1, 1, 30, 30]], 'parallel_runs': 1,\n"
+                    "     'qp_per_subset': 1}")
 
         spec.input("parent_folder", valid_type=orm.RemoteData, required = False,
                     help = 'scf, nscf or yambo remote folder')
@@ -351,12 +415,6 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             cls.setup,
             while_(cls.can_continue)(
                     cls.perform_next,
-            ),
-            if_(cls.post_processing_needed)(
-                cls.run_post_process,
-            ),
-            if_(cls.should_run_bse)(
-                cls.prepare_and_run_bse,
             ),
             cls.report_wf,
         )
@@ -570,7 +628,10 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         self.ctx.input_manager = YamboInputManager(**input_manager)
         
         self.ctx.number_of_subsets = 0
-        self.ctx.should_run_QP = False
+        self.ctx.should_run_qp = False
+        self.ctx.should_run_QP_splitter = False
+        self.ctx.merge_QP_needed = False
+        self.ctx.QP_db = None
         self.ctx.should_run_bse = False
         self.ctx.just_initialise = self.ctx.input_manager.qp.settings.get('INITIALISE', False) or self.ctx.input_manager.bse.settings.get('INITIALISE', False)
                        
@@ -580,26 +641,17 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         has_qp_subsets = len(self.ctx.input_manager.QP_subsets_dict) > 0
         just_init = self.ctx.just_initialise
 
-        self.ctx.should_run_QP = False
-        self.ctx.should_run_bse = False
-
-        if just_init:
-            pass  # neither will run
-        elif has_qp_inputs and has_bse_inputs and has_qp_subsets:
-            self.ctx.should_run_QP = bool(
-                self.ctx.input_manager.qp.parameters.get('variables', None))
-            self.ctx.should_run_bse = self.ctx.should_run_QP
-        elif has_qp_inputs and has_qp_subsets:
-            self.ctx.should_run_QP = True
-        elif has_bse_inputs and not has_qp_inputs:
+        if has_qp_inputs:
+            self.ctx.should_run_qp = True
+        if has_qp_subsets:
+            self.ctx.should_run_QP_splitter = True
+        if has_bse_inputs:
             self.ctx.should_run_bse = True
         
         if not hasattr(self.ctx.input_manager, 'parent_folder'):
             self.report('No parent folder, we start from scratch.')
-            self.ctx.calc_to_do = 'scf'
         elif self.ctx.input_manager.parent_folder is None:
             self.report('No parent folder, we start from scratch.')
-            self.ctx.calc_to_do = 'scf'
         else:
             parent = take_calc_from_remote(self.ctx.input_manager.parent_folder,level=-1)
             # we get the PwCalculation
@@ -609,28 +661,22 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             # empty parent, we need to recompute it.
             if parent.outputs.remote_folder.is_empty:
                 self.report('The parent remote folder is empty, we start from scratch.')
-                self.ctx.calc_to_do = 'scf'
 
             # pw parent
             if 'quantumespresso.pw' in parent.process_type:
                 parent_params = parent.inputs.parameters.get_dict()
                 calc_type = parent_params['CONTROL']['calculation']
                 if calc_type in ['scf','relax','vc-relax']:
-                    self.ctx.calc_to_do = 'nscf'
+                    self.ctx.all_calcs_to_do.remove('scf') # scf
                 elif calc_type in ['nscf']:
-                    self.ctx.calc_to_do = 'qp'
+                    self.ctx.all_calcs_to_do.remove('scf')
+                    self.ctx.all_calcs_to_do.remove('nscf')
 
             # yambo parent
             elif parent.process_type=='aiida.calculations:yambo.yambo':
-                self.ctx.calc_to_do = 'qp'
-                if self.ctx.should_run_QP: 
-                    self.ctx.calc_to_do = 'QP splitter'
-                elif self.ctx.should_run_bse and not self.ctx.should_run_QP:
-                    # this is the case where we do not provide as input the qp inputs, i.e. we attach the QP SingleFileData
-                    # to the bse inputs. (builder.bse.yambo.QP_corrections = orm.load_node(...)).
-                    self.ctx.calc_to_do = 'bse'
+                self.ctx.all_calcs_to_do.remove('scf')
+                self.ctx.all_calcs_to_do.remove('nscf')
             else:
-                self.ctx.calc_to_do = 'scf'
                 self.report('no valid input calculations, so we will start from scratch')
             
             self.ctx.calc = parent
@@ -640,12 +686,21 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             self.report(f'Setting nbnd={self.ctx.input_manager.Nb} in the NSCF step, not enough bands: {self.ctx.input_manager.nscf_nbnd}<{self.ctx.input_manager.Nb}')
             self.ctx.input_manager.set_nscf_nbnd(self.ctx.input_manager.Nb)
             # we redo nscf if not enough bands, we cannot proceed with yambo or QP_splitter:
-            if self.ctx.calc_to_do in ['qp', 'QP_splitter', 'bse']:
+            if self.ctx.all_calcs_to_do[0] in ['qp', 'QP_splitter', 'bse']:
                 self.report(f"Recomputing NSCF step with nbnd={self.ctx.input_manager.nscf_nbnd}")
-                self.ctx.calc_to_do = 'nscf' 
+                if 'scf' in self.ctx.all_calcs_to_do: self.ctx.all_calcs_to_do.remove('scf')
             
         self.ctx.splitted_QP = []
         self.ctx.qp_splitter = 0
+        
+        if not self.ctx.should_run_qp:
+            self.ctx.all_calcs_to_do.remove('qp')
+        if not self.ctx.should_run_QP_splitter:
+            self.ctx.all_calcs_to_do.remove('QP splitter')
+        if not self.ctx.should_run_bse:
+            self.ctx.all_calcs_to_do.remove('bse')
+            
+        self.ctx.calc_to_do=self.ctx.all_calcs_to_do[0]
         self.report("Workflow initilization step completed.")
 
     def can_continue(self):
@@ -653,10 +708,15 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         """This function checks the status of the last calculation and determines what happens next, including a successful exit.
         
         """
-        if self.ctx.calc_to_do != 'The workflow is finished':
-            self.report('The workflow continues with a {} calculation'.format(self.ctx.calc_to_do))
+        
+        if self.ctx.calc_to_do == 'QP splitter' and self.ctx.merge_QP_needed:
+            self.report('The workflow continues with a merge QP run')
+            self.ctx.all_calcs_to_do = ['merge QP'] + self.ctx.all_calcs_to_do
             return True
-        else:
+        elif len(self.ctx.all_calcs_to_do) != 0:
+            self.report('The workflow continues with a {} calculation'.format(self.ctx.all_calcs_to_do[0]))
+            return True
+        elif len(self.ctx.all_calcs_to_do) == 0:
             self.report('The workflow is finished')
             return False
 
@@ -667,6 +727,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         Will be a PW scf/nscf if the inputs do not provide the NSCF or previous yambo parent calculations
         
         """
+        
+        self.ctx.calc_to_do = self.ctx.all_calcs_to_do.pop(0)
         # check if the previous run failed.
         if hasattr(self.ctx, 'calc'):
             calc = self.ctx.calc
@@ -682,16 +744,14 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             self.ctx.input_manager.scf.metadata.call_link_label = 'scf'
             scf_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what='scf')
             future = self.submit(PwBaseWorkChain, **scf_inputs)
-            self.ctx.calc_to_do = 'nscf'
 
         elif self.ctx.calc_to_do == 'nscf':
             self.ctx.input_manager.nscf.metadata.call_link_label = 'nscf'
             self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
             nscf_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what='nscf')
             future = self.submit(PwBaseWorkChain, **nscf_inputs)
-            self.ctx.calc_to_do = 'qp'
 
-        elif self.ctx.calc_to_do in ['qp','bse']:
+        elif self.ctx.calc_to_do in ['qp']:
             c_name = self.ctx.calc_to_do
             # only in the QP case, we update the parameters, i.e. we add QP to be computed:
             if len(self.ctx.input_manager.additional_parsing) > 0 and self.ctx.calc_to_do=='qp':
@@ -712,12 +772,6 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
             yambo_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what=self.ctx.calc_to_do)
             future = self.submit(YamboRestart, **yambo_inputs)
-
-            if len(self.ctx.input_manager.QP_subsets_dict)>0:
-                # if we pass the instructions for the QP, it means we want to compute them.
-                self.ctx.calc_to_do = 'QP splitter'
-            else:
-                self.ctx.calc_to_do = 'The workflow is finished'
         
         elif self.ctx.calc_to_do == 'QP splitter': # This is the multiple QP runs which will then be merged with yambopy
 
@@ -799,36 +853,70 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     self.ctx.input_manager.qp.set_variable(name='QPkrange', value=[self.ctx.input_manager.QP_subsets_dict['subsets'].pop(),''])
                     self.ctx.input_manager.qp.metadata.call_link_label = 'yambo_QP_splitted_{}'.format(i+self.ctx.qp_splitter)
                     self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
-                    if self.ctx.should_run_QP and self.ctx.should_run_bse:
-                        # if run bse@QP, it means that we need to run the qp using the qp inputs.
-                        what='qp'
-                    else:
-                        what='qp'
+                    what='qp'
                     yambo_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what=what)
                     future = self.submit(YamboRestart, **yambo_inputs)
                     self.report('Launching YamboRestart <{}> for QP, iteration #{} of {}'.format(future.pk,i+self.ctx.qp_splitter, self.ctx.number_of_subsets))
                     self.ctx.splitted_QP.append(future.uuid)
                     key = f'qp_splitted_{i + self.ctx.qp_splitter}'
                     qp_futures[key] = future
-                else:
-                    self.ctx.calc_to_do = 'The workflow is finished'
             
             self.ctx.qp_splitter += self.ctx.input_manager.QP_subsets_dict['parallel_runs']
 
-            if len(self.ctx.input_manager.QP_subsets_dict['subsets']) == 0: self.ctx.calc_to_do = 'The workflow is finished'
+            if len(self.ctx.input_manager.QP_subsets_dict['subsets']) < 1: 
+                self.ctx.merge_QP_needed = True
+            else:
+                self.ctx.all_calcs_to_do = ['QP splitter'] + self.ctx.all_calcs_to_do
 
             return ToContext(**qp_futures) #wait for all splitted calculations....
+        
+        elif self.ctx.merge_QP_needed:
+            if self.ctx.calc_to_do == 'bse' and len(self.ctx.all_calcs_to_do) == 0:
+                self.ctx.all_calcs_to_do = ['bse']
+            
+            self.run_post_process()
+            
+            self.ctx.merge_QP_needed = False
+            
+            return
+        
+        elif self.ctx.calc_to_do == 'bse':
+            bse_params = self.ctx.input_manager.bse.parameters
+
+            if self.ctx.QP_db:
+                
+                # set QP_corrections input and check the Q index and the bands 
+                
+                if isinstance(self.ctx.QP_db,tuple): self.ctx.QP_db = self.ctx.QP_db[1]
+                
+                self.ctx.input_manager.bse.QP_corrections = self.ctx.QP_db
+                bse_params['variables']['KfnQPdb'] = "E < ./ndb.QP"
+
+                if not 'BSEBands' in bse_params['variables'].keys():
+                    if 'scissored' in self.ctx.input_manager.QP_subsets_dict.keys():
+                        bse_params['variables']['BSEBands'] = [[self.ctx.input_manager.QP_subsets_dict['scissored'][0],
+                                                                self.ctx.input_manager.QP_subsets_dict['scissored'][1]],
+                                                            '']
+                    else:
+                        bse_params['variables']['BSEBands'] = [[self.ctx.BSE_map['v_min'],
+                                                                self.ctx.BSE_map['c_max']],
+                                                            '']
+                if not 'BSEQptR' in bse_params['variables'].keys():
+                    bse_params['variables']['BSEQptR'] = [[self.ctx.BSE_map['q_ind'],
+                                                        self.ctx.BSE_map['q_ind']],
+                                                        '']
+
+
+            self.ctx.input_manager.bse.metadata.call_link_label = 'BSE'
+            
+            self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
+            
+            yambo_inputs = self.ctx.input_manager.generate_AiiDA_inputs(what='bse')
+            future = self.submit(YamboRestart, **yambo_inputs)
+            self.ctx.bse = future
 
         return ToContext(calc = future)
     
-    def post_processing_needed(self):
-        #in case of multiple QP calculations, yes
-        if len(self.ctx.splitted_QP) > 0:
-            self.report('We need to merge the computed QP')
-            return True
-        self.report('No post processing needed')
-        return False
-
     def run_post_process(self):
         #check if all QP splitted calculations were ok:
         for splitted in self.ctx.splitted_QP:
@@ -880,41 +968,11 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         BSE_map = QP_analyzer(self.ctx.calc.pk, self.ctx.QP_db,self.ctx.mapping)
         self.ctx.BSE_map = BSE_map
 
+        if BSE_map.get('missing_region', None) is not None and self.ctx.should_run_bse:
+            self.report('The merged QP database does not contain {} states, exiting the workflow'.format(BSE_map['missing_region']))
+            return self.exit_codes.ERROR_MISSING_BAND_REGION
+
         return
-
-    def should_run_bse(self):
-        #in case of BSE on top of GW just done, yes
-        return self.ctx.should_run_bse
-
-    def prepare_and_run_bse(self):
-        
-        self.ctx.calc_to_do='bse'
-        
-        # here we don't care of using the YamboInputManager, we do not need it for now.
-        self.ctx.yambo_inputs = self.exposed_inputs(YamboRestart, 'yres') 
-        bse_params = self.ctx.yambo_inputs.yambo.parameters.get_dict()
-
-        if isinstance(self.ctx.QP_db,tuple): self.ctx.QP_db = self.ctx.QP_db[1]
-            
-        self.ctx.yambo_inputs.yambo.QP_corrections = self.ctx.QP_db
-        bse_params['variables']['KfnQPdb'] = "E < ./ndb.QP"
-
-        self.ctx.yambo_inputs.parent_folder = self.ctx.calc.outputs.remote_folder
-
-        if not 'BSEBands' in bse_params['variables'].keys():
-            if 'scissored' in self.ctx.input_manager.QP_subsets_dict.keys():
-                bse_params['variables']['BSEBands'] = [[self.ctx.input_manager.QP_subsets_dict['scissored'][0],self.ctx.input_manager.QP_subsets_dict['scissored'][1]],'']
-            else:
-                bse_params['variables']['BSEBands'] = [[self.ctx.BSE_map['v_min'],self.ctx.BSE_map['c_max']],'']
-        if not 'BSEQptR' in bse_params['variables'].keys():
-            bse_params['variables']['BSEQptR'] = [[self.ctx.BSE_map['q_ind'],self.ctx.BSE_map['q_ind']],'']
-
-        self.ctx.yambo_inputs.yambo.parameters = orm.Dict(dict=bse_params)
-
-        self.ctx.yambo_inputs.metadata.call_link_label = 'BSE'
-        future = self.submit(YamboRestart, **self.ctx.yambo_inputs)
-
-        return ToContext(bse = future) 
 
     def report_wf(self):
 

@@ -1,7 +1,7 @@
 ###### methods for easy interaction with AiiDA and yambopy data structures
 import numpy as np
 from pydantic import BaseModel, ConfigDict
-from typing import Literal, Union, Optional, Any
+from typing import Literal, Union, Optional, Any, List
 from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam
 from aiida_yambo.utils.high_level_API.general_model import GeneralInputManager
 from aiida_yambo.utils.high_level_API.qe_model import PwBaseWorkChainInputManager
@@ -69,14 +69,18 @@ class YamboRestartInputManager(GeneralInputManager):
                     value=[value, units]
                 self.set_variable(variant, value)
     
+    def set_BSENb(self, 
+               setter_tags:list[Literal['BndsRnXs',]]=['BndsRnXs'], 
+               value:Union[list, int, float]=None, add_if_not_present:bool=True):
+        self.set_Nb(setter_tags=setter_tags, value=value, add_if_not_present=add_if_not_present)
+                
     def set_BSEGcut(self,
                     setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=['NGsBlkXs','BSENGBlk']):
         self.set_Gcut(setter_tags=setter_tags)
                 
-    def set_BSEbands(self,value:list[int]):
+    def set_BSEbands(self, value:list[int]):
         #value = [v,c]
-        if len(value) == 2 and value[-1]!='': value=[value,'']
-        return self.set_variable('BSEbands', [value,''])
+        return self.set_variable('BSEBands', [value,''])
                     
     ############ END setter methods ############
     
@@ -147,6 +151,12 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
 
     additional_parsing: list = []
     
+    # YamboConvergence:
+    parameters_space: List[Union[ConvParam, CoupledConvParam]] = []
+    workflow_settings: dict = {}
+    parallelism_instructions: dict = None
+    group_label: str = None
+    
     model_config = ConfigDict(
         extra='allow', # e.g. parent_folder.
     )
@@ -208,15 +218,45 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     def remove_parent_folder(self,):
         self.parent_folder = None
         
-    def set_QP_subsets_dict(self, bi, bf, qp_per_subset=1, parallel_runs=1):
-        # this sets to compute given range of bands for all kpoints.
-        self.QP_subsets_dict = {
-            'boundaries':{
-                'bi':bi,'bf':bf,
-            },
-            'parallel_runs':parallel_runs,
-            'qp_per_subset':qp_per_subset,
-        }
+    def set_QP_subsets_dict(
+        self,
+        qp_per_subset=1,
+        parallel_runs=1,
+        bi=None,
+        bf=None,
+        ki=None,
+        kf=None,
+        range_QP=None,
+        explicit=None,
+        consider_only=None,
+        **kwargs,
+    ):
+        """Define the QP subsets for the QP splitter.
+
+        Provide exactly one of: (bi, bf) -> boundaries, range_QP -> automatic
+        selection around the gap, explicit -> list of [k1,k2,b1,b2] ranges.
+        See the QP_subsets_dict help in yambowf.py for all options.
+        """
+        subsets = {'parallel_runs': parallel_runs, 'qp_per_subset': qp_per_subset}
+        if bi is not None or bf is not None:
+            if bi is None or bf is None:
+                raise ValueError('bi and bf must be given together to define a boundaries range')
+            boundaries = {'bi': bi, 'bf': bf}
+            if ki is not None:
+                boundaries['ki'] = ki
+            if kf is not None:
+                boundaries['kf'] = kf
+            subsets['boundaries'] = boundaries
+        elif range_QP is not None:
+            subsets['range_QP'] = range_QP
+        elif explicit is not None:
+            subsets['explicit'] = explicit
+        else:
+            raise ValueError('provide one of (bi, bf), range_QP or explicit to define the QP subsets')
+        if consider_only is not None:
+            subsets['consider_only'] = consider_only
+        subsets.update(kwargs)
+        self.QP_subsets_dict = subsets
     
     ############ START Redundant SETTER methods for yres easy access ############
     def remove_arguments(self, remove_tags:list[str]=[]):

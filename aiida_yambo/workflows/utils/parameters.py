@@ -1,7 +1,7 @@
 import itertools
 from typing import List, Dict, Any, Union, Tuple, Literal
 import numpy as np
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 class ConvParamBase(BaseModel):
     """Base configuration shared across all convergence parameter types."""
@@ -37,8 +37,13 @@ class ConvParam(ConvParamBase):
     convergence_algorithm: str = 'new_algorithm_1D'
     mirror_values: List[str] = Field(default_factory=list) # description='list of other parameters we want to change simultaneously with var, putting the same value')
 
-    def __init__(self, var: str, **data):
-        super().__init__(var=[var], **data)
+    def __init__(self, var: Union[str, List[str]], **data):
+        super().__init__(var=var, **data)
+
+    @field_validator('var', mode='before')
+    @classmethod
+    def _wrap_var(cls, v):
+        return v if isinstance(v, list) else [v]
         
     @property
     def space_length(self) -> int:
@@ -106,6 +111,14 @@ class CoupledConvParam(ConvParamBase):
     convergence_algorithm: str = 'new_algorithm_2D'
     # Dictionary mapping a parent variable to its specific mirrors: e.g., {'NGsBlkXp': ['NGsBlkXs', 'BSENGBlk']}
     mirror_values: Dict[str, List[str]] = Field(default_factory=dict)
+
+    def __init__(self, var: Union[str, List[str]], **data):
+        super().__init__(var=var, **data)
+
+    @field_validator('var', mode='before')
+    @classmethod
+    def _wrap_var(cls, v):
+        return v if isinstance(v, list) else [v]
 
     @model_validator(mode='after')
     def validate_strict_2d(self) -> 'CoupledConvParam':
