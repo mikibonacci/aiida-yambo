@@ -16,6 +16,8 @@ from aiida_yambo.workflows.utils.helpers_yambowf import *
 
 from aiida_yambo.workflows.utils.parameters import (
     ConvParam,
+    CoupledConvParam,
+    KpointMeshConvParam,
     load_parameter_space
 )
 
@@ -23,11 +25,14 @@ from aiida_yambo.workflows.utils.convergence import (
     ConvergenceEvaluator
 )
 
-
-
 from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
-YamboWorkflow = WorkflowFactory('yambo.yambo.yambowf')
+from typing import Literal
+
+from aiida_yambo.workflows.yambowf import YamboWorkflow
+
+#### IMPORT THE NEW BASEMODEL MANAGER FOR INPUTS ####
+from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
 
 class YamboConvergence(ProtocolMixin, WorkChain):
 
@@ -78,7 +83,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
 ##################################### OUTLINE ####################################
 
         spec.outline(
-            cls.start_workflow,
+            cls.setup,
             while_(cls.has_to_continue)(
                 if_(cls.p2y_needed)(
                     cls.do_p2y,
@@ -133,7 +138,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         structure:orm.StructureData=None,
         protocol_qe:str='moderate',
         protocol:str='moderate',
-        calc_type:str='gw',
+        calc_type:Literal['qp', 'bse', 'bse@qp']='qp',
         workflow_settings:dict=None,
         convergence_parameters:list=['FFTGvecs',['BndsRnXp','GbndRnge','NGsBlkXp'],'kpoint_density'],
         overrides:dict={},
@@ -189,37 +194,34 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         )
 
         builder.ywfl = ywfl_builder._inputs(prune=True)
-        
-        
+        nested_inputs = YamboInputManager.get_nested_inputs(builder,what='YamboConvergence', mode='builder')
+        input_manager = YamboInputManager(**nested_inputs)
+                
         if workflow_settings:
-            builder.workflow_settings = orm.Dict(workflow_settings)
+            input_manager.workflow_settings = workflow_settings
         else:
-            builder.workflow_settings = orm.Dict(overrides.get('workflow_settings', None))
+            input_manager.workflow_settings = inputs.get('workflow_settings', None)
         
         if calc_type=='bse':
-            builder.workflow_settings['what'] = ['lowest_exciton','brightest_exciton']
-            builder.workflow_settings = orm.Dict(inputs['workflow_settings'])
+            input_manager.workflow_settings['what'] = ['lowest_exciton','brightest_exciton']
 
-        ################ K-points density ################
-        builder.ywfl['nscf']['kpoints'] = orm.KpointsData()
-        builder.ywfl['nscf']['kpoints'].set_cell_from_structure(builder.ywfl['nscf']['pw']['structure'])
-
-        builder.ywfl['nscf']['kpoints'].set_kpoints_mesh_from_density(meta_parameters['kpoint_density']['max'],force_parity=True)
-        k_end = builder.ywfl['nscf']['kpoints'].get_kpoints_mesh()[0]
+        ################ if K-points density ################
+        input_manager.nscf.set_k_density(1/meta_parameters['kpoint_density']['max'],force_parity=True)
+        k_end = input_manager.nscf.get_mesh()[0]
         
-        builder.ywfl['nscf']['kpoints'].set_kpoints_mesh_from_density(meta_parameters['kpoint_density']['stop'],force_parity=True)
-        k_stop = builder.ywfl['nscf']['kpoints'].get_kpoints_mesh()[0]
+        input_manager.nscf.set_k_density(1/meta_parameters['kpoint_density']['stop'],force_parity=True)
+        k_stop = input_manager.nscf.get_mesh()[0]
 
-        builder.ywfl['nscf']['kpoints'].set_kpoints_mesh_from_density(meta_parameters['kpoint_density']['start'],force_parity=True)
-        k_start = builder.ywfl['nscf']['kpoints'].get_kpoints_mesh()[0]
+        input_manager.nscf.set_k_density(1/meta_parameters['kpoint_density']['start'],force_parity=True)
+        k_start = input_manager.nscf.get_mesh()[0]
         
         k_delta = np.zeros(3,dtype='int64')
-        k_delta[np.where(builder.ywfl['nscf']['pw']['structure'].pbc)] = int(meta_parameters['kpoint_density']['delta'])
+        k_delta[np.where(structure.pbc)] = int(meta_parameters['kpoint_density']['delta'])
         k_delta = list(k_delta)
 
         # Getting information on the nelectrons, ecutwfc and volume
         nelectrons, ecutwfc = periodical(structure.get_ase()) #nelectrons just as hint for later, not guaranteed to be correct (different pseudos can have different nelectrons)
-        ecutwfc = builder.ywfl['nscf']['pw']['parameters'].get_dict()['SYSTEM']['ecutwfc']
+        ecutwfc = input_manager.scf.parameters['SYSTEM']['ecutwfc']
         volume = structure.get_cell_volume()
         
         ################ FFTGVecs ################
@@ -250,117 +252,95 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         G_delta=meta_parameters['G_vectors']['delta']
 
         ######################### PARAMETERS SPACE CREATION #########################
-        builder.parameters_space =  orm.List([
-            {
-                           'var':['FFTGvecs'],
-                           'start': FFT_start,
-                           'stop':FFT_stop ,
-                           'delta':FFT_delta,
-                           'max':FFT_max,
-                           'steps': 4, 
-                           'max_iterations': 4, \
-                           'conv_thr': meta_parameters['convergence_thesholds']['FFTgvecs'],
-                           'conv_thr_units':'%',
-                           'convergence_algorithm':'new_algorithm_1D',
-                           },
-            {
-                           'var':['kpoint_mesh'],
-                           'start': k_start,
-                           'stop': k_stop ,
-                           'delta': k_delta,
-                           'max':k_end,
-                           'steps': 4, 
-                           'max_iterations': 4, \
-                           'conv_thr': meta_parameters['convergence_thesholds']['kpoints'],
-                           'conv_thr_units':'%',
-                           'convergence_algorithm':'new_algorithm_1D',
-                           },  
-                           
-            {
-                           'var':['BndsRnXp','GbndRnge','NGsBlkXp'],
-                           'start': [b_start,b_start,G_start],
-                           'stop':[b_stop,b_stop,G_stop] ,
-                           'delta':[b_delta,b_delta,G_delta],
-                           'max':[b_max,b_max,G_max],
-                           'steps': 6, 
-                           'max_iterations': 8, \
-                           'conv_thr': meta_parameters['convergence_thesholds']['Nb_Gcut'],
-                           'conv_thr_units':'%',
-                           'convergence_algorithm':'new_algorithm_2D',
-                           },
-                        
-                        ])
+        input_manager.parameters_space = [
+            ConvParam('FFTGvecs',                start=FFT_start,stop=FFT_stop,delta=FFT_delta,max=FFT_max,
+                steps=4,max_iterations=4,conv_thr=meta_parameters['convergence_thesholds']['FFTgvecs'],
+                conv_thr_units='%',convergence_algorithm='new_algorithm_1D', units='Ry'),
+            KpointMeshConvParam(start=k_start, stop=k_stop, delta=k_delta, max=k_end,
+                steps=4,max_iterations=4,conv_thr=meta_parameters['convergence_thesholds']['kpoints'],
+                conv_thr_units='%',convergence_algorithm='new_algorithm_1D', units='mesh'),
+            CoupledConvParam(var=['BndsRnXp','NGsBlkXp'], start=[b_start,G_start],
+                stop=[b_stop,G_stop],delta=[b_delta,G_delta],max=[b_max,G_max],
+                steps=6,max_iterations=8,conv_thr=meta_parameters['convergence_thesholds']['Nb_Gcut'],
+                conv_thr_units='%',convergence_algorithm='new_algorithm_2D', units=['', 'Ry'],
+                mirror_values={'BndsRnXp':['GbndRnge']},),
+        ]
 
         if protocol == 'molecule' or structure.pbc.count(True)==0:
-            builder.parameters_space = orm.List(builder.parameters_space.get_list()[::2]) #no k-points, so we skip the second element in the parameters_space.
-
-        return builder
-    
+            input_manager.parameters_space = input_manager.parameters_space[::2] #no k-points, so we skip the second element in the parameters_space.
+        
+        new_builder = input_manager.populate_builder(builder, what='YamboConvergence')
+        
+        return new_builder
+            
     def from_yamboworkflow(self,):
         raise NotImplementedError
     
     def from_yambopy(self,):
         raise NotImplementedError
         
-    def start_workflow(self):
+    def setup(self):
         """Initialize the workflow"""
+        
+        input_manager = YamboInputManager.get_nested_inputs(
+            self.inputs, what='Yamboconvergence', mode='builder'
+        )
+        self.ctx.input_manager = YamboInputManager(**input_manager)
+        
         self.ctx.limit_reached = False # this checks if we cannot increase the parameter more than the `max` value.
         self.ctx.convergence_summary = {}   #converged parameters
-        self.ctx.calc_inputs = self.exposed_inputs(YamboWorkflow, 'ywfl')        
+        #self.ctx.calc_inputs = self.exposed_inputs(YamboWorkflow, 'ywfl')        
         self.ctx.hint = {}
         self.ctx.global_step = 0
         self.ctx.wfl_pk = []
-        self.ctx.workflow_settings = self.inputs.workflow_settings.get_dict()
-        self.ctx.bands_mode = self.ctx.workflow_settings.pop('bands_nscf_update', 0)
-        self.ctx.parameters_space = copy.deepcopy(load_parameter_space(self.inputs.parameters_space))
-        parameters_space = copy.deepcopy(load_parameter_space(self.inputs.parameters_space))
+        self.ctx.bands_mode = self.ctx.input_manager.workflow_settings.get('bands_nscf_update', 0)
 
+        self.ctx.calc_type = 'bse' if len(self.ctx.input_manager.bse.parameters) > 0 else 'qp'
+        
         # we add the quantity to be converged to the additional_parsing list.
-        if hasattr(self.ctx.calc_inputs,'additional_parsing'):
-            l = self.ctx.workflow_settings['what']+self.ctx.calc_inputs.additional_parsing.get_list()
-            self.ctx.calc_inputs.additional_parsing = orm.List(list(dict.fromkeys(l)))
+        if len(self.ctx.input_manager.additional_parsing) > 0:
+            self.ctx.input_manager.additional_parsing += self.ctx.input_manager.workflow_settings['what']
         else:
-            self.ctx.calc_inputs.additional_parsing = orm.List(list(self.ctx.workflow_settings['what']))
+            self.ctx.input_manager.additional_parsing = self.ctx.input_manager.workflow_settings['what']
 
         # here we load or create the group where to put all the calculations.
         if hasattr(self.inputs, "group_label"):
-            self.ctx.group = orm.load_group(self.inputs.group_label.value)
-            self.report('group: {}'.format(self.inputs.group_label.value))
+            self.ctx.group = orm.load_group(self.ctx.input_manager.group_label)
+            self.report('group: {}'.format(self.ctx.input_manager.group_label))
         else:
             try:
-                self.ctx.group = orm.load_group("convergence_tests_{}".format(self.ctx.calc_inputs.scf.pw.structure.get_formula()))
+                self.ctx.group = orm.load_group("convergence_tests_{}".format(self.ctx.input_manager.scf.structure.get_formula()))
             except:
-                self.ctx.group = Group(label="convergence_tests_{}".format(self.ctx.calc_inputs.scf.pw.structure.get_formula()))
-                self.report('creating group: {}'.format(self.ctx.calc_inputs.scf.pw.structure.get_formula()))
+                self.ctx.group = Group(label="convergence_tests_{}".format(self.ctx.input_manager.scf.structure.get_formula()))
+                self.report('creating group: {}'.format(self.ctx.input_manager.scf.structure.get_formula()))
             if not self.ctx.group.is_stored: self.ctx.group.store()
         
         # here we add to the ctx the parallelism instructions, i.e. the parameter-dependent set of resources to be used.
-        if hasattr(self.inputs, "parallelism_instructions"):
-            self.ctx.parallelism_instructions = build_parallelism_instructions(self.inputs.parallelism_instructions.get_dict(),)
-        else:
-            self.ctx.parallelism_instructions = {}  
-        
-        # this calc_manager can be removed? we substitue it with self.ctx.current_convergence
-        self.ctx.current_convergence = ConvergenceEvaluator(
-            parameters=self.ctx.parameters_space.pop(),
-            what=self.ctx.workflow_settings['what']
-        ) 
-
-        self.ctx.final_result = {}     
-
-        self.report(
-            "Workflow type: {}; looking for convergence of {}"
-            .format(
-                self.ctx.workflow_settings['type'], 
-                self.ctx.current_convergence.what,
-            )
-        )
+        if len(self.ctx.input_manager.parallelism_instructions) > 0:
+            self.ctx.parallelism_instructions = build_parallelism_instructions(self.ctx.input_manager.parallelism_instructions,) 
+            
         self.report(
             "Workflow initilization step completed, the parameters will be: {}."
             .format(
-                [params.var for params in parameters_space]
+                [params.var for params in self.ctx.input_manager.parameters_space]
             )
         )
+        
+        # this calc_manager can be removed? we substitue it with self.ctx.current_convergence
+        self.ctx.current_convergence = ConvergenceEvaluator(
+            parameters=self.ctx.input_manager.parameters_space.pop(),
+            what=self.ctx.input_manager.workflow_settings['what']
+        ) 
+        
+        self.report(
+            "Workflow type: {}; looking for convergence of {}"
+            .format(
+                self.ctx.input_manager.workflow_settings['type'], 
+                self.ctx.current_convergence.what,
+            )
+        )
+
+        self.ctx.final_result = {}     
 
     def has_to_continue(self):
         
@@ -373,11 +353,11 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             return True
         
         #failed cases
-        elif self.ctx.current_convergence.success and len(self.ctx.parameters_space)==0: 
+        elif self.ctx.current_convergence.success and len(self.ctx.input_manager.parameters_space)==0: 
             self.report('Workflow finished')
             return False
         elif not self.ctx.current_convergence.success and self.ctx.current_convergence.iterations_exceeded:
-            self.report('Workflow failed due to max restarts exceeded for variable {}'.format(self.ctx.calc_manager['var']))
+            self.report('Workflow failed due to max restarts exceeded for variable {}'.format(self.ctx.current_convergence.parameters.var))
             return False
         elif self.ctx.current_convergence.edges_exceeded:
             self.report('space not large enough to complete convergence')
@@ -387,42 +367,43 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             self.ctx.current_convergence.advance_iteration()
             return True
         
-        # TODO: change the following we add some tolerance for failed calculations, to try to anyway converge
-        elif not self.ctx.calc_manager['success'] and \
-                   self.ctx.calc_manager['iter'] > self.ctx.calc_manager['max_iterations']:
-            self.report('Iterations: {} - Max iterations: {}'.format(self.ctx.calc_manager['iter'],self.ctx.calc_manager['max_iterations']))
-            self.report('Workflow failed due to some failed calculation in the investigation of {}'.format(self.ctx.calc_manager['var']))
+        elif not self.ctx.current_convergence.success and \
+                   self.ctx.current_convergence.current_iteration > self.ctx.current_convergence.parameters.max_iterations:
+            self.report('Iterations: {} - Max iterations: {}'.format(self.ctx.current_convergence.current_iteration,self.ctx.current_convergence.parameters.max_iterations))
+            self.report('Workflow failed due to some failed calculation in the investigation of {}'.format(self.ctx.current_convergence.parameters.var))
 
             return False
         
         # successful case:
         elif self.ctx.current_convergence.success:                
-            if len(self.ctx.parameters_space) == 0:
+            if len(self.ctx.input_manager.parameters_space) == 0:
                 self.report("No more parameters to be converged, the workflow will not continue.")
                 return False
             self.ctx.hint = {}
             return True
         else:
-            self.report('Undefined state on {}, so we exit'.format(self.ctx.calc_manager['var']))
-            self.ctx.calc_manager['success'] = 'undefined'
+            self.report('Undefined state on {}, so we exit'.format(self.ctx.current_convergence.parameters.var))
+            self.ctx.current_convergence.success = 'undefined'
             return False
         
     def update_next_step(self):
         
         if self.ctx.current_convergence.success:
             self.ctx.current_convergence = ConvergenceEvaluator(
-                self.parameters_space.pop(),
-                what=self.ctx.workflow_settings['what']
+                self.ctx.input_manager.parameters_space.pop(),
+                what=self.ctx.input_manager.workflow_settings['what']
             ) 
             
-            if self.ctx.workflow_settings.get('type') == 'cheap':
-                self.report('Mode is "cheap", so we reset the other parameters to the initial ones.')
-                self.ctx.calc_inputs = self.exposed_inputs(YamboWorkflow, 'ywfl')
-                if hasattr(self.ctx.calc_inputs,'additional_parsing'):
-                    l = self.ctx.current_convergence.what+self.ctx.calc_inputs.additional_parsing.get_list()
-                    self.ctx.calc_inputs.additional_parsing = List(list(dict.fromkeys(l)))
+            if self.ctx.input_manager.workflow_settings.get('type') == 'cheap':
+                self.report('Mode is "cheap", so we reset the other parameters to be the initial ones.')
+                input_manager = YamboInputManager.get_nested_inputs(
+                    self.inputs, what='Yamboconvergence', mode='builder'
+                )
+                self.ctx.input_manager = YamboInputManager(**input_manager)
+                if len(self.ctx.input_manager.additional_parsing) > 0:
+                    self.ctx.input_manager.additional_parsing += self.ctx.input_manager.workflow_settings['what']
                 else:
-                    self.ctx.calc_inputs.additional_parsing = List(list(self.ctx.current_convergence.what))
+                    self.ctx.input_manager.additional_parsing = self.ctx.input_manager.workflow_settings['what']
                 self.ctx.convergence_summary.update(self.ctx.hint)
             else:
                 self.report('Mode is "heavy", so we keep the previous parameters to be the converged ones, if any.')
@@ -442,7 +423,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         if evaluator.new_grid: # shift the grid
             # if iteration is not the first, we shift
             if evaluator.current_iteration > 1:
-                self.ctx.params_space = self.ctx.params_space.with_shift(
+                evaluator.parameters = evaluator.parameters.with_shift(
                         start_shift = self.ctx.delta, 
                         stop_shift = self.ctx.delta
                     )
@@ -471,9 +452,10 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 calc_inputs=self.ctx.calc_inputs,
                 evaluator=evaluator,
                 explicit_value=self.ctx.params_space, 
-                workflow_dict=self.ctx.parallelism_instructions,
+                workflow_dict=self.ctx.input_manager.parallelism_instructions,
                 index=evaluator.concurrent_steps_count if not evaluator.inquired_point else 0, # so if iteration = 1 and not finished, should start from evaluator.max_concurrent_steps+1
                 group=self.ctx.group,
+                calc_type=self.ctx.calc_type, 
             )
                                     
             self.report(f"New parameters are: {values}")
@@ -607,7 +589,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
     def p2y_needed(self):
         """Determine whether a preliminary calculation is required before convergence."""
 
-        if self.ctx.workflow_settings.get('skip_pre'):
+        if self.ctx.input_manager.workflow_settings.get('skip_pre'):
             self.report('skipping pre (debug mode)')
             return False
 

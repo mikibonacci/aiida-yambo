@@ -37,7 +37,7 @@ class PwBaseWorkChainInputManager(GeneralInputManager):
         self.kpoints.set_cell_from_structure(self.structure)
         self.kpoints.set_kpoints_mesh(value, shift) 
     
-    def set_k_inverse_distance(self, value:float=1.0, force_parity=True):
+    def set_k_density(self, value:float=1.0, force_parity=True):
         from aiida import orm
         self.kpoints = orm.KpointsData()
         self.kpoints.set_cell_from_structure(self.structure)

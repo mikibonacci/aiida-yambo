@@ -2,7 +2,7 @@
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 from typing import Literal, Union, Optional, Any, List
-from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam
+from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, KpointMeshConvParam
 from aiida_yambo.utils.high_level_API.general_model import GeneralInputManager
 from aiida_yambo.utils.high_level_API.qe_model import PwBaseWorkChainInputManager
 
@@ -152,7 +152,7 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     additional_parsing: list = []
     
     # YamboConvergence:
-    parameters_space: List[Union[ConvParam, CoupledConvParam]] = []
+    parameters_space: List[Union[ConvParam, CoupledConvParam, KpointMeshConvParam]] = []
     workflow_settings: dict = {}
     parallelism_instructions: dict = None
     group_label: str = None

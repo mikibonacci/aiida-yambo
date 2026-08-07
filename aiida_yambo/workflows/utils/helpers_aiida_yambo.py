@@ -195,7 +195,7 @@ import copy
 from typing import Dict, Any, Tuple
 from aiida.orm import Dict as AiiDA_Dict, KpointsData, load_node
 
-def updater(calc_inputs, evaluator, explicit_value, workflow_dict: dict, index: int, group) -> Tuple[Any, Dict[str, Any], Any, Any]:
+def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index: int, group, calc_type) -> Tuple[Any, Dict[str, Any], Any, Any]:
     """
     Updates AiiDA calculation inputs for a specific iteration step.
     
@@ -204,14 +204,14 @@ def updater(calc_inputs, evaluator, explicit_value, workflow_dict: dict, index: 
     eliminating hardcoded variables.
     
     Args:
-        calc_inputs: The AiiDA input ports object to modify (e.g., self.ctx.calc_inputs).
+        input_manager: The AiiDA input manager (no AiiDA data, mostly),
         evaluator: The active ConvergenceEval instance tracking runtime state.
         explicit_value: The exact point value/vector to apply (e.g., 20.0 or [20.0, 4.0]).
         workflow_dict: The dictionary tracking global workflow configuration (groups, parallelism).
         index: The loop index tracking finishing concurrent submissions.
         
     Returns:
-        tuple: (updated_calc_inputs, values_dict, already_done_pk, parent_nscf_node)
+        tuple: (updated_input_manager, values_dict, already_done_pk, parent_nscf_node)
     """
     already_done = False
     values_dict = {}
@@ -229,36 +229,29 @@ def updater(calc_inputs, evaluator, explicit_value, workflow_dict: dict, index: 
     # we then take the value [p1,p2] if it's a list, else we take a list [p1] so the for loop below works when getting the `val` value. 
     current_values = current_values[index] if isinstance(current_values[0], list) else current_values[index:index+1]
 
-    # Deepcopy parameter dictionary safely once before modifying inputs
-    yambo_params = copy.deepcopy(calc_inputs.yres.yambo.parameters.get_dict())
-    variables_block = yambo_params.setdefault('variables', {})
-
     for i,var in enumerate(variables):
 
         val = current_values[i]
         # 1. K-POINTS HANDLING (Updated to match inverse distance tracking)
         if var in ('kpoint_mesh', 'kpoint_inverse_distance'):
             k_quantity = val
-            k_quantity_shift = calc_inputs.nscf.kpoints.get_kpoints_mesh()[1]
-            
-            calc_inputs.nscf.kpoints = KpointsData()
-            calc_inputs.nscf.kpoints.set_cell_from_structure(calc_inputs.scf.pw.structure)
-            
+            k_quantity_shift = input_manager.nscf.get_mesh()[1]
+
             if isinstance(k_quantity, (tuple, list)):
-                calc_inputs.nscf.kpoints.set_kpoints_mesh(k_quantity, k_quantity_shift) 
+                input_manager.nscf.set_kmesh(k_quantity, k_quantity_shift) 
             else:
-                # 1 / inverse_distance provides the direct grid spacing mesh distribution
-                calc_inputs.nscf.kpoints.set_kpoints_mesh_from_density(1.0 / k_quantity, force_parity=True)
+                input_manager.nscf.set_k_density(k_quantity, force_parity=True)
 
             # Safely flush remote parent folder context if swapping grid meshes to prevent errors
-            if hasattr(calc_inputs, 'parent_folder'):
+            if input_manager.parent_folder is not None:
                 try:
-                    calc_inputs.parent_folder = find_pw_parent(
-                        take_calc_from_remote(calc_inputs.parent_folder), 
+                    parent_folder = find_pw_parent(
+                        take_calc_from_remote(input_manager.parent_folder), 
                         calc_type=['scf']
                     ).outputs.remote_folder 
+                    input_manager.set_parent_folder(parent_folder)
                 except Exception:
-                    del calc_inputs.parent_folder
+                    input_manager.parent_folder = None
 
             calc_inputs.yres.yambo.settings = update_dict(calc_inputs.yres.yambo.settings, 'COPY_SAVE', False)
             calc_inputs.yres.yambo.settings = update_dict(calc_inputs.yres.yambo.settings, 'COPY_DBS', False)
@@ -291,10 +284,8 @@ def updater(calc_inputs, evaluator, explicit_value, workflow_dict: dict, index: 
             
             values_dict[var] = val    # Extract scalar cutoff value
 
-            calc_inputs.yres.yambo.parameters = AiiDA_Dict(yambo_params)
-
     # 3. PARALLELISM GENERATION SETUP
-    new_para, new_res, pop_list = set_parallelism(parallelism_instructions, calc_inputs, k_quantity)
+    new_para, new_res, pop_list = set_parallelism(parallelism_instructions, input_manager, k_quantity)
 
     if new_para and new_res:
         calc_inputs.yres.yambo.parameters = update_dict(
@@ -314,11 +305,11 @@ def updater(calc_inputs, evaluator, explicit_value, workflow_dict: dict, index: 
     effective_parent = parent_nscf or parent_scf
     if effective_parent and not hasattr(calc_inputs, 'parent_folder'):
         try:
-            calc_inputs.parent_folder = load_node(effective_parent).outputs.remote_folder 
+            input_manager.parent_folder = load_node(effective_parent).outputs.remote_folder 
         except Exception:
             pass
 
-    return calc_inputs, values_dict, already_done, parent_nscf
+    return input_manager, values_dict, already_done, parent_nscf
 
 ################################## parsers #####################################
 def take_quantities(calc_dict, workflow_dict, steps = 1, what = ['gap_eV'], backtrace=1):

@@ -84,6 +84,70 @@ class ConvParam(ConvParamBase):
             return space
 
 
+class KpointMeshConvParam(ConvParam):
+    """
+    Single-variable (1D) parameter space for k-point meshes.
+
+    The bounds ``start/stop/delta/max`` are 3-vectors ``[nx, ny, nz]`` instead of
+    scalars, since the whole mesh is varied at once.
+
+    Example:
+        mesh = KpointMeshConvParam(start=[4, 4, 4], stop=[12, 12, 12],
+                                   delta=[1, 1, 1], max=[22, 22, 22],
+                                   units='mesh', conv_thr=10)
+    """
+    start: List[Union[float, int]]
+    stop: List[Union[float, int]]
+    delta: List[Union[float, int]]
+    max: List[Union[float, int]]
+
+    def __init__(self, var: Union[str, List[str]] = 'kpoint_mesh', **data):
+        super().__init__(var=var, **data)
+
+    @field_validator('var', mode='before')
+    @classmethod
+    def _ensure_single_kpoint_mesh(cls, v):
+        wrapped = v if isinstance(v, list) else [v]
+        if len(wrapped) != 1 or wrapped[0] not in ('kpoint_mesh', 'kpoint_inverse_distance'):
+            raise ValueError(f"KpointMeshConvParam must have exactly one var in "
+                             f"('kpoint_mesh', 'kpoint_inverse_distance'). Received: {wrapped}.")
+        return wrapped
+
+    @field_validator('start', 'stop', 'delta', 'max', mode='after')
+    @classmethod
+    def _ensure_len3(cls, v):
+        if len(v) != 3:
+            raise ValueError(f"Kpoint mesh bounds must be 3-vectors [nx, ny, nz]. Received: {v}")
+        return v
+
+    def check_bounds(self) -> Tuple[bool, str]:
+        if any(s > m for s, m in zip(self.stop, self.max)):
+            return False, f"Variable {self.var[0]}: Stop value ({self.stop}) exceeds max ({self.max})."
+        return True, "Valid"
+
+    def build_stepped_space(self) -> List[List[float]]:
+        """Generates an explicit list of mesh points containing exactly N steps."""
+        space = np.linspace(self.start, self.stop, self.steps, dtype=self.dtype).tolist()
+        if any(np.any(np.asarray(p) > np.asarray(self.max)) for p in space):
+            return ['space_exceeds_max']
+        return space
+
+    def build_linear_space(self) -> List[List[float]]:
+        """Generates explicit mesh points from start to stop spaced by delta."""
+        space = [
+            np.arange(start, stop + (delta / 2), delta, dtype=self.dtype).tolist()
+            for start, stop, delta in zip(self.start, self.stop, self.delta)
+        ]
+        return space
+
+    def with_shift(self, start_shift: float = 0, stop_shift: float = 0) -> 'KpointMeshConvParam':
+        """Returns a cloned instance with shifted start or stop boundaries."""
+        updated_data = self.model_dump(by_alias=True)
+        updated_data['start'] = [s + start_shift for s in self.start]
+        updated_data['stop'] = [s + stop_shift for s in self.stop]
+        return KpointMeshConvParam(**updated_data)
+
+
 class CoupledConvParam(ConvParamBase):
     """
     Strictly Two-Variable (2D) coupled parameter space.
@@ -238,7 +302,10 @@ def load_parameter_space(raw_dicts: List[Dict[str, Any]]) -> List[Union[ConvPara
             
             # Map workflow dictionary keys back to internal fields if necessary
             # (Pydantic's populate_by_name allows using either aliases or field names)
-            param_obj = ConvParam(var=var_name, **kwargs)
+            if var_name in ('kpoint_mesh', 'kpoint_inverse_distance'):
+                param_obj = KpointMeshConvParam(var=var_name, **kwargs)
+            else:
+                param_obj = ConvParam(var=var_name, **kwargs)
             instantiated_params.append(param_obj)
             
         elif len(variables) == 2:
