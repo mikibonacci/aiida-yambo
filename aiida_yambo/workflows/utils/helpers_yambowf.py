@@ -167,102 +167,97 @@ def QP_bands_interface(node, mapping, only_scissor=Bool(False)):
             'scissor':List([scissor[0],scissor[1],scissor[2]])}
 
 
-def quantumespresso_input_validator(workchain_inputs):
+def quantumespresso_input_validator(workchain_inputs, calc_type='qp'):
     
     messages = []
 
-    yambo_bandsX = workchain_inputs.yres.yambo.parameters.get_dict()['variables'].pop('BndsRnXp',[[0],''])[0][-1]
-    yambo_bandsX_bse = workchain_inputs.yres.yambo.parameters.get_dict()['variables'].pop('BndsRnXs',[[0],''])[0][-1]
-    yambo_bandsSc = workchain_inputs.yres.yambo.parameters.get_dict()['variables'].pop('GbndRnge',[[0],''])[0][-1]
-    yambo_bands_QP_X = 0
-    yambo_bands_QP_Sc = 0
+    is_legacy = hasattr(workchain_inputs, 'yres')
+    if is_legacy:
+        variables = workchain_inputs.yres.yambo.parameters.get_dict()['variables']
+        qp_variables = workchain_inputs.qp.yambo.parameters.get_dict()['variables'] if hasattr(workchain_inputs, 'qp') else {}
+    else:
+        yambo_manager = workchain_inputs.bse if 'bse' in calc_type else workchain_inputs.qp
+        variables = copy.deepcopy(yambo_manager.parameters['variables'])
+        qp_variables = copy.deepcopy(yambo_manager.parameters['variables'])
 
-    if hasattr(workchain_inputs,'qp'):
-        yambo_bands_QP_X = workchain_inputs.qp.yambo.parameters.get_dict()['variables'].pop('BndsRnXp',[[0],''])[0][-1]
-        yambo_bands_QP_Sc = workchain_inputs.qp.yambo.parameters.get_dict()['variables'].pop('GbndRnge',[[0],''])[0][-1]
+    yambo_bandsX = variables.pop('BndsRnXp', [[0], ''])[0][-1]
+    yambo_bandsX_bse = variables.pop('BndsRnXs', [[0], ''])[0][-1]
+    yambo_bandsSc = variables.pop('GbndRnge', [[0], ''])[0][-1]
+    yambo_bands_QP_X = qp_variables.pop('BndsRnXp', [[0], ''])[0][-1]
+    yambo_bands_QP_Sc = qp_variables.pop('GbndRnge', [[0], ''])[0][-1]
 
-
-    gwbands = max(yambo_bandsX,yambo_bandsSc,yambo_bandsX_bse,yambo_bands_QP_X,yambo_bands_QP_Sc)
-    message_bands = 'GW bands are: {}'.format(gwbands)
-    messages.append(message_bands)
+    gwbands = max(yambo_bandsX, yambo_bandsSc, yambo_bandsX_bse, yambo_bands_QP_X, yambo_bands_QP_Sc)
+    messages.append('GW bands are: {}'.format(gwbands))
     scf_params, nscf_params = None, None
-    #scf_params_def, nscf_params_def = create_quantumespresso_inputs(structure, bands_gw = gwbands)
 
-    if hasattr(workchain_inputs,'parent_folder'):
+    def _get_nbnd(params):
+        if params is None:
+            return 0
+        if isinstance(params, dict):
+            return params.get('SYSTEM', {}).get('nbnd', 0)
+        return params.get_dict()['SYSTEM']['nbnd']
+
+    def _set_nbnd(params, nbnd):
+        if isinstance(params, dict):
+            params.setdefault('SYSTEM', {})['nbnd'] = int(nbnd)
+            return params
+        new = params.get_dict()
+        new['SYSTEM']['nbnd'] = int(nbnd)
+        return Dict(new)
+
+    parent_folder = getattr(workchain_inputs, 'parent_folder', None)
+    scf_params_parent = False
+    nscf_params_parent = False
+    if parent_folder is not None:
         try:
-            parent_calc = workchain_inputs.parent_folder.creator #take_calc_from_remote(workchain_inputs.parent_folder)
-        except:
-            parent_calc = take_calc_from_remote(workchain_inputs.parent_folder)
-           
+            parent_calc = parent_folder.creator
+        except Exception:
+            parent_calc = take_calc_from_remote(parent_folder)
         try:
             scf_params_parent = find_pw_parent(parent_calc, calc_type=['scf']).inputs.parameters
-            message_scf_parent = 'found scf inputs from parent'
-        except:
-            scf_params_parent = False
-    else:
-        scf_params_parent = False
-
-    if hasattr(workchain_inputs,'parent_folder'):
-        try:
-            parent_calc = workchain_inputs.parent_folder.creator #take_calc_from_remote(workchain_inputs.parent_folder)
-        except:
-            parent_calc = take_calc_from_remote(workchain_inputs.parent_folder)
+            messages.append('found scf inputs from parent')
+        except Exception:
+            pass
         try:
             nscf_params_parent = find_pw_parent(parent_calc, calc_type=['nscf']).inputs.parameters
-            message_nscf_parent = 'found nscf inputs from parent\n'
-        except:
-            nscf_params_parent = False
-    else:
-        nscf_params_parent = False
+            messages.append('found nscf inputs from parent')
+        except Exception:
+            pass
+
+    redo_nscf = False
 
     if scf_params_parent:
-        message_scf = message_scf_parent
-        messages.append(message_scf)
-        scf_params =  scf_params_parent 
-    elif hasattr(workchain_inputs.scf.pw,'parameters'):
-        message_scf = 'scf inputs found'
-        messages.append(message_scf)
-        scf_params =  workchain_inputs.scf.pw.parameters
+        scf_params = scf_params_parent
+    elif is_legacy and hasattr(workchain_inputs.scf.pw, 'parameters'):
+        scf_params = workchain_inputs.scf.pw.parameters
+        messages.append('scf inputs found')
+    elif not is_legacy and workchain_inputs.scf.parameters:
+        scf_params = workchain_inputs.scf.parameters
+        messages.append('scf inputs found')
     else:
-        message_scf = 'scf inputs not found, setting defaults'
-        messages.append(message_scf)
-        scf_params = None
-    
-    redo_nscf = False
-        
+        messages.append('scf inputs not found, setting defaults')
+
     if nscf_params_parent:
-        message_nscf = message_nscf_parent
-        messages.append(message_nscf)
-        nscf_params =  nscf_params_parent
-        if nscf_params.get_dict()['SYSTEM']['nbnd'] < gwbands:
+        nscf_params = nscf_params_parent
+        messages.append('found nscf inputs from parent')
+        if _get_nbnd(nscf_params) < gwbands:
             redo_nscf = True
-            message_nscf += ' and setting nbnd of the nscf calculation to b = {}'.format(gwbands)
-            nscf_params = nscf_params.get_dict()
-            nscf_params['SYSTEM']['nbnd'] = int(gwbands)
-            nscf_params = Dict(nscf_params)
-            messages.append(message_nscf)  
-    elif hasattr(workchain_inputs.nscf.pw,'parameters'):
-        message_nscf = 'nscf inputs found' 
-        nscf_params =  workchain_inputs.nscf.pw.parameters
-        if nscf_params.get_dict()['SYSTEM']['nbnd'] < gwbands:
+            nscf_params = _set_nbnd(nscf_params, gwbands)
+            messages.append('and setting nbnd of the nscf calculation to b = {}'.format(gwbands))
+    elif is_legacy and hasattr(workchain_inputs.nscf.pw, 'parameters'):
+        nscf_params = workchain_inputs.nscf.pw.parameters
+        messages.append('nscf inputs found')
+        if _get_nbnd(nscf_params) < gwbands:
             redo_nscf = True
-            message_nscf += ', and setting nbnd of the nscf calculation to b = {}\n'.format(gwbands)
-            nscf_params = nscf_params.get_dict()
-            nscf_params['SYSTEM']['nbnd'] = int(gwbands)
-            nscf_params = Dict(nscf_params)
-        messages.append(message_nscf)  
-    elif hasattr(workchain_inputs.nscf.pw,'parameters'):
-        message_nscf = 'nscf inputs found\n' 
-        nscf_params =  workchain_inputs.nscf.pw.parameters
-        if nscf_params.get_dict()['SYSTEM']['nbnd'] < gwbands:
+            nscf_params = _set_nbnd(nscf_params, gwbands)
+            messages.append(', and setting nbnd of the nscf calculation to b = {}'.format(gwbands))
+    elif not is_legacy and workchain_inputs.nscf.parameters:
+        nscf_params = workchain_inputs.nscf.parameters
+        messages.append('nscf inputs found')
+        if _get_nbnd(nscf_params) < gwbands:
             redo_nscf = True
-            message_nscf += ', and setting nbnd of the nscf calculation to b = {}\n'.format(gwbands)
-            nscf_params = nscf_params.get_dict()
-            nscf_params['SYSTEM']['nbnd'] = int(gwbands)
-            nscf_params = Dict(nscf_params)
-        else:
-            nscf_params = None
-        messages.append(message_nscf)       
+            nscf_params = _set_nbnd(nscf_params, gwbands)
+            messages.append(', and setting nbnd of the nscf calculation to b = {}'.format(gwbands))
     
     return scf_params, nscf_params, redo_nscf, gwbands, messages 
 
@@ -282,9 +277,10 @@ def add_corrections(yambo_parameters:dict, parent_folder:orm.RemoteData, additio
     number_of_kpoints = mapping['number_of_kpoints']
 
     new_params = copy.deepcopy(yambo_parameters)
+    variables = new_params.get('variables', {}) if isinstance(new_params, dict) else {}
     
     QP = []
-    if 'QPkrange' in new_params['variables'].keys():
+    if 'QPkrange' in variables:
         if isinstance(new_params['variables']['QPkrange'][0][0],int):
             if new_params['variables']['QPkrange'][0][0] > number_of_kpoints or new_params['variables']['QPkrange'][0][1] > number_of_kpoints:
                 pass
@@ -317,7 +313,7 @@ def add_corrections(yambo_parameters:dict, parent_folder:orm.RemoteData, additio
         elif name == 'lumo':
             if not [lumo_k,lumo_k, cond,cond] in QP: QP.append([lumo_k,lumo_k, cond,cond])
 
-    if 'QPkrange' in new_params['variables'].keys(): new_params['variables']['QPkrange']= [QP,'']
+    if 'QPkrange' in variables: new_params['variables']['QPkrange']= [QP,'']
 
     return mapping, new_params
 
@@ -329,7 +325,7 @@ def parse_qp_level(calc, level_map):
 
     level_gw = (level_dft + level_corr)*27.2114
 
-    return np.round(level_gw,4), np.round(level_dft*27.2114,4)
+    return np.round(level_gw,3), np.round(level_dft*27.2114,3)
 
 def parse_qp_gap(calc, gap_map): #post proc 
 
@@ -345,17 +341,17 @@ def parse_qp_gap(calc, gap_map): #post proc
 
 
 
-    return np.round(_cb_level_gw-_vb_level_gw,4), np.round(_cb_level_dft*27.2114-_vb_level_dft*27.2114, 4)
+    return np.round(_cb_level_gw-_vb_level_gw,3), np.round(_cb_level_dft*27.2114-_vb_level_dft*27.2114, 3)
 
 def parse_excitons(calc, what): #post proc 
 
     if what == 'brightest':
         index = calc.outputs.array_excitonic_states.get_array('intensities').argmax()
         brightest = calc.outputs.array_excitonic_states.get_array('energies')[index]
-        return np.round(brightest, 4), index+1
+        return np.round(brightest, 3), index+1
     elif what == 'lowest':
         lowest = calc.outputs.array_excitonic_states.get_array('energies')[0]
-        return np.round(lowest, 4), 1 
+        return np.round(lowest, 3), 1 
 
 def additional_parsed(calc, additional_parsing_list, mapping): #post proc 
     
@@ -586,7 +582,7 @@ def QP_analyzer(pk,QP_db,mapping):
             'GW_k_v_ind':int(k_v),
             'GW_k_c_ind':int(k_c),
             'candidate_for_BSE':bool(gw_gap.values>=0),
-            'gap_GW':np.round(gw_gap.values,4),
+            'gap_GW':np.round(gw_gap.values,3),
             #'gap_DFT':np.round(dft_gap.values,4),
             'QP_pk':QP_db.pk,
             'SOC':soc,

@@ -128,22 +128,41 @@ class The_Predictor_1D():
             self.var_.remove('GbndRnge')
             self.delta_.pop(self.var.index('GbndRnge'))
 
+        if len(self.delta_) == 1:
+            self.delta_ = self.delta_[0]
+
         # Create numpy arrays from result DataFrame columns for efficient operations
         for i in self.var_:
             setattr(self, i, np.asarray(self.result[i].values, dtype=object))
 
-        # Extract the parameter grid used in calculations
-        self.parameters = np.asarray(self.grid[self.var_[0]])
-        #ci vuole un k adapter
+        # 'kpoint_mesh' needs its own adapter: the raw column can contain ragged
+        # entries (None/NaN rows or stray scalars) that np.asarray cannot coerce,
+        # so handle it before the generic extraction below.
         if 'kpoint_mesh' in self.var_:
-            
-            self.parameters = self.grid['mesh'] #per i k, griglia specifica da inputs.
+
+            # Filter result rows to those with a valid 3-vector mesh so grid and
+            # result stay row-aligned after sanitization.
+            valid = [
+                isinstance(m, (list, tuple)) and len(m) == 3
+                for m in self.result['kpoint_mesh']
+            ]
+            if not all(valid):
+                self.result = self.result[valid].reset_index(drop=True)
+                if getattr(self, 'r', None) is not None:
+                    self.r = np.asarray(self.r)[valid]
+                for i in self.var_:
+                    setattr(self, i, np.asarray(self.result[i].values, dtype=object))
+
+            meshes = [list(m) for m in self.result['kpoint_mesh']]
+
+            if len(meshes) < 2:
+                raise ValueError(f'Not enough valid kpoint_mesh rows for analysis: {len(meshes)}')
 
             kx = []
             k3 = []
-            for i in self.result['kpoint_mesh']:
-                kx.append(i[0])
-                k3.append(i[0]*i[1]*i[2])
+            for m in meshes:
+                kx.append(m[0])
+                k3.append(m[0]*m[1]*m[2])
             
             k_true=[]
             for i in self.result['uuid']:
@@ -153,9 +172,8 @@ class The_Predictor_1D():
             self.result['k^3'] = k3
             self.result['nk'] = k_true
             
-            
+            self.parameters = np.array(meshes)
             self.starting_mesh = self.parameters[0]
-            self.parameters = np.array(self.parameters)
             self.p = self.parameters
             self.parameters = self.parameters[:,0]*self.parameters[:,1]*self.parameters[:,2]
             self.delta_z = max(1,self.delta_[2])
@@ -163,14 +181,36 @@ class The_Predictor_1D():
             self.delta_x = max(1,self.delta_[0])
             self.delta_ = self.delta_x*self.delta_y*self.delta_z
 
+        else:
+            # Extract the parameter grid used in calculations
+            self.parameters = np.asarray(self.grid[self.var_[0]])
+            # kpoint_density holds the AiiDA distance (1/Å, decreasing with
+            # refinement). The plateau/curvature fit machinery is tuned to
+            # increasing mesh-count scales (relative meshes ~ 1/d, k-point
+            # counts ~ 1/d**3), so fit against the (1/distance)**3 proxy here
+            # and map the predicted proxy back to a distance at the end.
+            if self.var_[0] == 'kpoint_density' and len(self.parameters) and not np.any(np.asarray(self.parameters) == 0):
+                self.parameters = (1.0 / np.asarray(self.parameters, dtype=float))**3
+                d0 = getattr(self, 'start', None)
+                d1 = getattr(self, 'stop', None)
+                if d0 is not None and d1 is not None and d0 != d1:
+                    # proxy-space stride with ~8 points per window step
+                    self.delta_ = abs(1.0 / d0 - 1.0 / d1)**3 / 8.0
+
         #self.bb, self.GG = copy.deepcopy(list(self.result.BndsRnXp.values)),copy.deepcopy(list(self.result.NGsBlkXp.values))
         
         self.res = copy.deepcopy(self.result[self.what].values[:] + self.Fermi)
         
-        try:
-            self.bb_Ry = copy.deepcopy(self.bande[0,np.array(self.result.BndsRnXp.values)-1]/13.6)
-        except:
-            self.bb_Ry = copy.deepcopy(self.bande[0,-1]/13.6)
+        if isinstance(self.bande, (int, float, type(None))):
+            self.bb_Ry = 0
+        else:
+            try:
+                self.bb_Ry = copy.deepcopy(self.bande[0,np.array(self.result.BndsRnXp.values)-1]/13.6)
+            except:
+                try:
+                    self.bb_Ry = copy.deepcopy(self.bande[0,-1]/13.6)
+                except:
+                    self.bb_Ry = 0
             
         self.r[:] = self.r[:] + self.Fermi
         
@@ -189,6 +229,9 @@ class The_Predictor_1D():
          
         xdata,ydata = self.parameters,self.r
         #print('fitting all simulations.')
+        if len(ydata) < 2:
+            print(f"Not enough data points ({len(ydata)}) for 1D fit (need >=2), skipping fit")
+            return False
 
         popt,pcov = curve_fit(f,xdata=xdata,
                       ydata=ydata,sigma=1/xdata**(3-alpha), #so we give more importance to high if the fit is slow...c
@@ -205,7 +248,7 @@ class The_Predictor_1D():
             
         ###########Preliminary fit#################################
         
-        self.X_fit = np.arange(np.min(xdata),np.max(xdata)*10,self.delta_) 
+        self.X_fit = np.arange(np.min(xdata), np.max(xdata)*10, abs(self.delta_)) 
         
         if self.var_[0] == 'kpoint_mesh':
             l = [1,2,3]
@@ -282,7 +325,7 @@ class The_Predictor_1D():
             self.kz_fit = self.kz_fit[self.X_fit <= max(max(xdata),self.X_fit[self.condition_conv_calc][0]*1.5)]
             self.X_fit = self.X_fit[self.X_fit <= max(max(xdata),self.X_fit[self.condition_conv_calc][0]*1.5)]
         else:
-            self.X_fit = np.arange(min(xdata),b+1,self.delta_)
+            self.X_fit = np.arange(min(xdata), b + 1, abs(self.delta_))
         
     
         
@@ -341,11 +384,19 @@ class The_Predictor_1D():
         if conv_bands in self.parameters:
             self.next_step['already_computed'] = True
 
+        if self.var_[0] == 'kpoint_density':
+            # fit ran on the (1/distance)**3 proxy: map the converged proxy
+            # back to the AiiDA distance carried by the variable.
+            self.next_step[self.var_[0]] = 1.0 / max(conv_bands, np.finfo(float).eps)**(1.0 / 3.0)
+
         if 'BndsRnXp' in self.var and 'GbndRnge' in self.var:
             self.next_step['GbndRnge'] = copy.deepcopy(self.next_step['BndsRnXp'])
         
         if self.var_[0] == 'kpoint_mesh':
-            kx = self.kx_fit[self.X_fit==conv_bands]
+            matching = np.where(self.X_fit == conv_bands)[0]
+            if len(matching) == 0:
+                matching = np.array([int(np.argmin(np.abs(self.X_fit - conv_bands)))])
+            kx = float(self.kx_fit[matching[0]])
             A = self.starting_mesh[1]/self.starting_mesh[0]
             B = self.starting_mesh[2]/self.starting_mesh[0]
             factor = (kx-self.starting_mesh[0])/self.delta[0]
@@ -367,7 +418,14 @@ class The_Predictor_1D():
                     self.next_step['new_grid'] = True
                     break
         else:
-            if self.next_step[self.var_[0]] > self.max:
+            if self.var_[0] == 'kpoint_density':
+                # Decreasing variable: refinement means smaller distances, so the
+                # out-of-grid boundary is on the fine side. A next step finer
+                # than the current window's fine edge (stop) needs a new window.
+                stop = getattr(self, 'stop', None)
+                if stop is not None and self.next_step[self.var_[0]] < stop:
+                    self.next_step['new_grid'] = True
+            elif self.next_step[self.var_[0]] > self.max:
                 self.next_step['new_grid'] = True
         
         self.next_step['E_ref'] = reference
@@ -376,6 +434,12 @@ class The_Predictor_1D():
         return self.next_step
     
     def check_the_point(self,old_hints={}):
+        # Guard against missing keys after FIFO reset or first grid (old_hints may be just {'new_grid': True})
+        if self.what not in old_hints or self.var_[0] not in old_hints:
+            self.point_reached = False
+            self.old_discrepancy = np.inf
+            self.index = [0]
+            return None
         
         if self.var_[0] == 'kpoint_mesh':
             self.old_discrepancy = \

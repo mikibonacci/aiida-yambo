@@ -1,0 +1,93 @@
+site_name: aiida-yambo
+site_description: AiiDA workflows for YAMBO many-body perturbation theory
+site_url: https://yambo-code.github.io/yambo-aiida/
+repo_url: https://github.com/yambo-code/yambo-aiida
+repo_name: yambo-code/yambo-aiida
+docs_dir: docs
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.top
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.footer
+    - toc.follow
+    - toc.integrate
+    - content.code.copy
+    - content.code.select
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - def_list
+  - admonition
+  - pymdownx.details
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+extra_javascript:
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+plugins:
+  - search
+exclude_docs: |
+  source/**
+  build/**
+nav:
+  - Home: index.md
+  - Getting started:
+      - Overview: getting-started/index.md
+      - Installation: installation.md
+      - Configure AiiDA and codes: setup.md
+      - DFT starting point: tutorials/prerequisites.md
+  - Tutorials:
+      - Overview: tutorials/index.md
+      - Prerequisites: tutorials/prerequisites.md
+      - High-level input API: tutorials/high-level-api.md
+      - YamboWorkflow: tutorials/workflow.md
+      - BSE and BSE@GW: tutorials/bse.md
+      - Automated convergence: tutorials/convergence.md
+      - Wannier90 interpolation: tutorials/wannier90.md
+  - How-to:
+      - Overview: how-to/index.md
+      - Recipes and troubleshooting: how-to/recipes.md
+      - Parallelism and restarts: how-to/parallelism.md
+  - Reference:
+      - Overview: reference/index.md
+      - Workflows: reference/workflows.md
+      - Outputs and parsed quantities: reference/outputs.md
+      - Internal calculation layers: reference/internal-layers.md
+      - Changelog: https://github.com/yambo-code/yambo-aiida/releases

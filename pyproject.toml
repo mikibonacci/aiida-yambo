@@ -42,20 +42,10 @@ Homepage = "https://github.com/yambo-code/yambo-aiida"
 
 [project.optional-dependencies]
 docs = [
-    "docutils",
-    "sphinx~=6.2.1",
-    "sphinx-copybutton~=0.5.2",
-    "sphinx-book-theme~=1.0.1",
-    "sphinx-design~=0.4.1",
-    "sphinxcontrib-details-directive~=0.1.0",
-    "sphinx-autoapi~=3.0.0",
-    "myst_parser~=1.0.0",
-    "sphinx-togglebutton",
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
     "versioneer",
     "versioneer[toml]",
-    "Cython",
-    "myst-nb @ git+https://github.com/executablebooks/MyST-NB.git",
-    "yambopy @ git+https://github.com/yambo-code/yambopy@aiida-parsing#egg=yambopy",
 ]
 
 tests = [

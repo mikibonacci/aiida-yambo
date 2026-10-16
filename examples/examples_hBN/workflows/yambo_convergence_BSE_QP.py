@@ -406,33 +406,41 @@ def main(options):
             "num_cores_per_mpiproc":1,
         }
 
-    parallelism_instructions_manual = Dict(dict={'manual' : {                                                            
-                                                              'std_1':{
-                                                                     'BndsRnXp':[1,100],
-                                                                     'NGsBlkXp':[2,18],
-                                                                     'parallelism':dict_para_medium,
-                                                                     'resources':dict_res_medium,
-                                                                     },
-                                                             'std_2':{
-                                                                     'BndsRnXp':[101,1000],
-                                                                     'NGsBlkXp':[2,18],
-                                                                     'parallelism':dict_para_high,
-                                                                     'resources':dict_res_high,
-                                                                     },}})
+    parallelism_instructions_manual = Dict(dict={'manual': [
+        {
+            'id': 'std_1',
+            'bands': [1, 100],
+            'gcut': [2, 18],
+            'parallelism': dict_para_medium,
+            'resources': dict_res_medium,
+        },
+        {
+            'id': 'std_2',
+            'bands': [101, 1000],
+            'gcut': [2, 18],
+            'parallelism': dict_para_high,
+            'resources': dict_res_high,
+        },
+    ]})
 
-    parallelism_instructions_auto = Dict(dict={'automatic' : {                                                            
-                                                              'std_1':{
-                                                                     'BndsRnXp':[1,100],
-                                                                     'NGsBlkXp':[1,18],
-                                                                     'mode':'balanced',
-                                                                     'resources':dict_res_medium,
-                                                                     },
-                                                             'std_2':{
-                                                                     'BndsRnXp':[101,1000],
-                                                                     'NGsBlkXp':[1,18],
-                                                                     'mode':'memory',
-                                                                     'resources':dict_res_high,
-                                                                     },}})
+    parallelism_instructions_auto = Dict(dict={'automatic': [
+        {
+            'id': 'std_1',
+            'bands': [1, 100],
+            'gcut': [1, 18],
+            'mode': 'balanced',
+            'resources': dict_res_medium,
+        },
+        {
+            'id': 'std_2',
+            'bands': [101, 1000],
+            'gcut': [1, 18],
+            'mode': 'memory',
+            'resources': dict_res_high,
+        },
+    ]})
+
+
     
 
     builder.parallelism_instructions = parallelism_instructions_auto

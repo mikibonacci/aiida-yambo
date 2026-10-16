@@ -1,7 +1,8 @@
 import itertools
+from math import isfinite
 from typing import List, Dict, Any, Union, Tuple, Literal
 import numpy as np
-from pydantic import BaseModel, Field, model_validator, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
 class ConvParamBase(BaseModel):
     """Base configuration shared across all convergence parameter types."""
@@ -11,8 +12,26 @@ class ConvParamBase(BaseModel):
     conv_thr_units: Literal['eV', '%'] = '%'
     convergence_algorithm: Literal['new_algorithm_1D','new_algorithm_2D', 'dummy'] = 'new_algorithm_1D'
     
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator('steps', 'max_concurrent_steps', 'max_iterations')
+    @classmethod
+    def _positive_counts(cls, value):
+        if value <= 0:
+            raise ValueError('Step, concurrency and iteration counts must be positive.')
+        return value
+
+    @staticmethod
+    def _validate_axis(start, stop, delta, maximum, *, decreasing=False, fixed=False):
+        if not all(isfinite(value) for value in (start, stop, delta, maximum)):
+            raise ValueError('Parameter bounds and delta must be finite.')
+        if fixed and start == stop and delta == 0:
+            return
+        if decreasing:
+            if start < stop or delta >= 0:
+                raise ValueError('Density requires start >= stop and a negative delta.')
+        elif start > stop or delta <= 0:
+            raise ValueError('Parameter bounds require start <= stop and a positive delta.')
 
     def to_dict(self) -> Dict[str, Any]:
         """Dumps data using the exact dictionary keys your workflow expects."""
@@ -43,7 +62,19 @@ class ConvParam(ConvParamBase):
     @field_validator('var', mode='before')
     @classmethod
     def _wrap_var(cls, v):
-        return v if isinstance(v, list) else [v]
+        wrapped = v if isinstance(v, list) else [v]
+        if len(wrapped) != 1 or not wrapped[0]:
+            raise ValueError('ConvParam requires exactly one non-empty variable name.')
+        return wrapped
+
+    @model_validator(mode='after')
+    def _validate_bounds(self):
+        # K-point subclasses validate their scalar/vector bounds separately.
+        if self.var[0] not in ('kpoint_mesh', 'kpoint_density'):
+            self._validate_axis(self.start, self.stop, self.delta, self.max)
+        elif type(self) is ConvParam:
+            raise ValueError('Use KpointMeshConvParam for k-point convergence.')
+        return self
         
     @property
     def space_length(self) -> int:
@@ -86,65 +117,125 @@ class ConvParam(ConvParamBase):
 
 class KpointMeshConvParam(ConvParam):
     """
-    Single-variable (1D) parameter space for k-point meshes.
+    Single-variable (1D) parameter space for k-point meshes or densities.
 
-    The bounds ``start/stop/delta/max`` are 3-vectors ``[nx, ny, nz]`` instead of
-    scalars, since the whole mesh is varied at once.
+    For ``kpoint_mesh`` the bounds are 3-vectors ``[nx, ny, nz]``.
+    For ``kpoint_density`` the bounds are scalar floats equal to the AiiDA
+    distance (1/Å) passed straight to ``set_kpoints_mesh_from_density``: the
+    grid runs from ``start`` (coarsest, largest distance) down to ``stop``
+    (finest, smallest distance), with ``delta`` negative to shift the window
+    finer, and ``max`` the coarse cap (no distance larger than ``max``).
 
     Example:
         mesh = KpointMeshConvParam(start=[4, 4, 4], stop=[12, 12, 12],
                                    delta=[1, 1, 1], max=[22, 22, 22],
                                    units='mesh', conv_thr=10)
+        dens = KpointMeshConvParam(var='kpoint_density', start=0.80, stop=0.20,
+                                   delta=-0.04, max=0.80, units='1/A', conv_thr=10)
     """
-    start: List[Union[float, int]]
-    stop: List[Union[float, int]]
-    delta: List[Union[float, int]]
-    max: List[Union[float, int]]
+    start: Union[List[Union[float, int]], float]
+    stop: Union[List[Union[float, int]], float]
+    delta: Union[List[Union[float, int]], float]
+    max: Union[List[Union[float, int]], float]
 
     def __init__(self, var: Union[str, List[str]] = 'kpoint_mesh', **data):
         super().__init__(var=var, **data)
 
     @field_validator('var', mode='before')
     @classmethod
-    def _ensure_single_kpoint_mesh(cls, v):
+    def _ensure_single_kpoint(cls, v):
         wrapped = v if isinstance(v, list) else [v]
-        if len(wrapped) != 1 or wrapped[0] not in ('kpoint_mesh', 'kpoint_inverse_distance'):
+        if len(wrapped) != 1 or wrapped[0] not in ('kpoint_mesh', 'kpoint_density'):
             raise ValueError(f"KpointMeshConvParam must have exactly one var in "
-                             f"('kpoint_mesh', 'kpoint_inverse_distance'). Received: {wrapped}.")
+                             f"('kpoint_mesh', 'kpoint_density'). Received: {wrapped}.")
         return wrapped
 
-    @field_validator('start', 'stop', 'delta', 'max', mode='after')
-    @classmethod
-    def _ensure_len3(cls, v):
-        if len(v) != 3:
-            raise ValueError(f"Kpoint mesh bounds must be 3-vectors [nx, ny, nz]. Received: {v}")
-        return v
+    @model_validator(mode='after')
+    def _validate_kpoint_shapes(self):
+        is_mesh = self.var[0] == 'kpoint_mesh'
+        for name in ('start', 'stop', 'delta', 'max'):
+            v = getattr(self, name)
+            if is_mesh:
+                if not isinstance(v, list) or len(v) != 3:
+                    raise ValueError(f"Kpoint mesh '{name}' must be 3-vector [nx,ny,nz]. Got: {v}")
+            else:  # kpoint_density
+                if isinstance(v, list):
+                    raise ValueError(f"Kpoint density '{name}' must be scalar float, not list. Got: {v}")
+        if is_mesh:
+            for start, stop, delta, maximum in zip(self.start, self.stop, self.delta, self.max):
+                self._validate_axis(start, stop, delta, maximum, fixed=True)
+                if any(value <= 0 or not float(value).is_integer() for value in (start, stop, maximum)):
+                    raise ValueError('K-point mesh bounds must be positive integers.')
+                if not float(delta).is_integer():
+                    raise ValueError('K-point mesh delta must be an integer.')
+        else:
+            self._validate_axis(self.start, self.stop, self.delta, self.max, decreasing=True)
+            if min(self.start, self.stop, self.max) <= 0:
+                raise ValueError('K-point distances must be positive.')
+        return self
 
     def check_bounds(self) -> Tuple[bool, str]:
+        if self.var[0] == 'kpoint_density':
+            # decreasing density: distances must be positive and the coarsest
+            # value (start) must stay within the coarse cap (max).
+            if min(self.start, self.stop) <= 0:
+                return False, f"Variable {self.var[0]}: distances must be positive (start={self.start}, stop={self.stop})."
+            if self.start > self.max:
+                return False, f"Variable {self.var[0]}: Start value ({self.start}) exceeds max ({self.max})."
+            return True, "Valid"
         if any(s > m for s, m in zip(self.stop, self.max)):
             return False, f"Variable {self.var[0]}: Stop value ({self.stop}) exceeds max ({self.max})."
         return True, "Valid"
 
-    def build_stepped_space(self) -> List[List[float]]:
-        """Generates an explicit list of mesh points containing exactly N steps."""
+    def build_stepped_space(self) -> Union[List[List[float]], List[float]]:
+        """Generates explicit list of mesh points or densities."""
+        if self.var[0] == 'kpoint_density':
+            space = np.linspace(self.start, self.stop, self.steps).tolist()
+            if max(space) > self.max or min(space) <= 0:
+                return ['space_exceeds_max']
+            return space
         space = np.linspace(self.start, self.stop, self.steps, dtype=self.dtype).tolist()
         if any(np.any(np.asarray(p) > np.asarray(self.max)) for p in space):
             return ['space_exceeds_max']
         return space
 
-    def build_linear_space(self) -> List[List[float]]:
-        """Generates explicit mesh points from start to stop spaced by delta."""
+    def build_linear_space(self) -> Union[List[List[float]], List[float]]:
+        """Generates explicit mesh points or densities spaced by delta."""
+        if self.var[0] == 'kpoint_density':
+            # decreasing density: walk down from start; drop any non-positive
+            # distance that would arise from a coarse delta overshooting 0.
+            space = np.arange(self.start, self.stop + (self.delta / 2), self.delta).tolist()
+            return [x for x in space if x > 0]
         space = [
-            np.arange(start, stop + (delta / 2), delta, dtype=self.dtype).tolist()
+            [start] if delta == 0 else np.arange(start, stop + (delta / 2), delta, dtype=self.dtype).tolist()
             for start, stop, delta in zip(self.start, self.stop, self.delta)
         ]
         return space
 
-    def with_shift(self, start_shift: float = 0, stop_shift: float = 0) -> 'KpointMeshConvParam':
+    def with_shift(self, start_shift: Union[float, List[float]] = 0, stop_shift: Union[float, List[float]] = 0) -> 'KpointMeshConvParam':
         """Returns a cloned instance with shifted start or stop boundaries."""
         updated_data = self.model_dump(by_alias=True)
-        updated_data['start'] = [s + start_shift for s in self.start]
-        updated_data['stop'] = [s + stop_shift for s in self.stop]
+        if self.var[0] == 'kpoint_density':
+            # scalar density, decreasing with refinement. delta is expected to
+            # be negative (window moves finer); clamp degenerate shifts so the
+            # window stays positive and ordered (start > stop > 0).
+            new_start = self.start + (start_shift if not isinstance(start_shift, list) else start_shift[0])
+            new_stop = self.stop + (stop_shift if not isinstance(stop_shift, list) else stop_shift[0])
+            if new_stop <= 0:
+                new_stop = self.stop / 2
+            if new_start <= 0 or new_start <= new_stop:
+                new_start = max(self.start / 2, new_stop)
+            updated_data['start'] = new_start
+            updated_data['stop'] = new_stop
+            return KpointMeshConvParam(**updated_data)
+        if isinstance(start_shift, list):
+            updated_data['start'] = [s + sh for s, sh in zip(self.start, start_shift)]
+        else:
+            updated_data['start'] = [s + start_shift for s in self.start]
+        if isinstance(stop_shift, list):
+            updated_data['stop'] = [s + sh for s, sh in zip(self.stop, stop_shift)]
+        else:
+            updated_data['stop'] = [s + stop_shift for s in self.stop]
         return KpointMeshConvParam(**updated_data)
 
 
@@ -169,9 +260,9 @@ class CoupledConvParam(ConvParamBase):
     units: List[str] #'units, as in yambopy')
     conv_thr: Union[float, int] = 10 # 10%
     dtype: str = 'int'
-    steps: int = 5
+    steps: int = 6
     max_iterations: int = 8
-    points: int = 5
+    points: Literal[4, 5, 6] = 6
     convergence_algorithm: str = 'new_algorithm_2D'
     # Dictionary mapping a parent variable to its specific mirrors: e.g., {'NGsBlkXp': ['NGsBlkXs', 'BSENGBlk']}
     mirror_values: Dict[str, List[str]] = Field(default_factory=dict)
@@ -187,12 +278,16 @@ class CoupledConvParam(ConvParamBase):
     @model_validator(mode='after')
     def validate_strict_2d(self) -> 'CoupledConvParam':
         """Validates that exactly 2 variables are provided and all vector dimensions match."""
-        lists_to_check = [self.var, self.start, self.stop, self.delta, self.max]
+        lists_to_check = [self.var, self.start, self.stop, self.delta, self.max, self.units]
         lengths = {len(lst) for lst in lists_to_check}
         if len(lengths) > 1:
-            raise ValueError("Dimensions mismatch! 'var', 'start', 'stop', 'delta', and 'max' must have identical lengths.")
+            raise ValueError("Dimensions mismatch! 'var', bounds, 'delta', and 'units' must have identical lengths.")
         if len(self.var) != 2:
             raise ValueError(f"CoupledConvParam is strictly for 2 dimensions. Received {len(self.var)} variables.")
+        if any(not var for var in self.var) or len(set(self.var)) != 2:
+            raise ValueError('Coupled variables must have distinct, non-empty names.')
+        for bounds in zip(self.start, self.stop, self.delta, self.max):
+            self._validate_axis(*bounds)
         return self
     
     @property
@@ -249,8 +344,11 @@ class CoupledConvParam(ConvParamBase):
         Maps out geometric points on the 2D bounding rectangle box.
         
         Args:
-            self.points: 4 -> Returns the 4 corners of the rectangle (main & cross diagonals).
+            self.points: 4 -> Returns the 4 corners of the rectangle.
                     5 -> Returns the 4 corners + the exact center midpoint.
+                    6 -> Returns the 4 corners + 25% and 75% points on the
+                         UL->LR diagonal (upper-left [start[0], stop[1]] to
+                         lower-right [stop[0], start[1]]). This is the default.
         """
         boundary_choices = [[st, sp] for st, sp in zip(self.start, self.stop)]
         grid_points = [list(p) for p in itertools.product(*boundary_choices)]
@@ -261,8 +359,21 @@ class CoupledConvParam(ConvParamBase):
             center_point = [st + (sp - st) / 2.0 for st, sp in zip(self.start, self.stop)]
             grid_points.append([int(c) for c in center_point] if isinstance(self.start[0],int) else center_point)
             return grid_points
+        elif self.points == 6:
+            # diagonal from upper-left (start[0], stop[1]) to lower-right (stop[0], start[1])
+            ul = [self.start[0], self.stop[1]]
+            lr = [self.stop[0], self.start[1]]
+            p25 = [ul[0] + 0.25 * (lr[0] - ul[0]), ul[1] + 0.25 * (lr[1] - ul[1])]
+            p75 = [ul[0] + 0.75 * (lr[0] - ul[0]), ul[1] + 0.75 * (lr[1] - ul[1])]
+            # keep int semantics when start is int (common for bands)
+            is_int = isinstance(self.start[0], int) and isinstance(self.start[1], int)
+            if is_int:
+                p25 = [int(round(c)) for c in p25]
+                p75 = [int(round(c)) for c in p75]
+            grid_points.extend([p25, p75])
+            return grid_points
         else:
-            raise ValueError("For 2D, requested points can only be 4 (corners) or 5 (corners + center).")
+            raise ValueError("For 2D, requested points can only be 4 (corners), 5 (corners + center) or 6 (corners + 25%/75% UL->LR diagonal).")
 
 
 def create_parameter_space_inputs(params: List[Union[ConvParam, CoupledConvParam]]) -> list:
@@ -288,6 +399,8 @@ def load_parameter_space(raw_dicts: List[Dict[str, Any]]) -> List[Union[ConvPara
     for d in raw_dicts:
         # Extract the list of variables to determine dimensionality
         variables = d.get('var', [])
+        if isinstance(variables, str):
+            variables = [variables]
         
         if not variables:
             raise ValueError("Invalid parameter dictionary: Missing or empty 'var' key.")
@@ -302,7 +415,7 @@ def load_parameter_space(raw_dicts: List[Dict[str, Any]]) -> List[Union[ConvPara
             
             # Map workflow dictionary keys back to internal fields if necessary
             # (Pydantic's populate_by_name allows using either aliases or field names)
-            if var_name in ('kpoint_mesh', 'kpoint_inverse_distance'):
+            if var_name in ('kpoint_mesh', 'kpoint_density'):
                 param_obj = KpointMeshConvParam(var=var_name, **kwargs)
             else:
                 param_obj = ConvParam(var=var_name, **kwargs)
@@ -386,4 +499,3 @@ if __name__ == "__main__":
             print("Linear Space: ", obj.build_linear_space())
         else:
             print("5-Point Grid:", obj.build_diagonal_corners())
-        

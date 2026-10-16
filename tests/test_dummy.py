@@ -2,8 +2,7 @@
 import pytest
 import tempfile
 import shutil
-from aiida.manage.fixtures import fixture_manager
-pytest_plugins = ['aiida.manage.tests.pytest_fixtures'] 
+# Shared fixtures are loaded by tests/conftest.py.
 @pytest.fixture(scope='session')
 def fixture_work_directory():
     """Return a temporary folder that can be used as for example a computer's work directory."""
@@ -16,10 +15,10 @@ def fixture_computer_localhost(fixture_work_directory):
     """Return a `Computer` instance mocking a localhost setup."""
     from aiida.orm import Computer
     computer = Computer(
-        name='localhost',
+        label='localhost-test',
         hostname='localhost',
-        transport_type='local',
-        scheduler_type='direct',
+        transport_type='core.local',
+        scheduler_type='core.direct',
         workdir=fixture_work_directory).store()
     computer.set_default_mpiprocs_per_machine(1)
     yield computer

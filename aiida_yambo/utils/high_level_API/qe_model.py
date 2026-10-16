@@ -31,17 +31,31 @@ class PwBaseWorkChainInputManager(GeneralInputManager):
         family = orm.load_group(value)
         self.pseudos = family.get_pseudos(structure=self.structure)
     
-    def set_kmesh(self, value:list=[1,1,1], shift:list=[0,0,0]):
+    def set_kmesh(self, value:list=[1,1,1], shift:list=[0,0,0], store:bool=False):
         from aiida import orm
         self.kpoints = orm.KpointsData()
         self.kpoints.set_cell_from_structure(self.structure)
-        self.kpoints.set_kpoints_mesh(value, shift) 
+        self.kpoints.set_kpoints_mesh(value, shift)
+        if store:
+            self.kpoints.store()
     
-    def set_k_density(self, value:float=1.0, force_parity=True):
+    def set_k_density(self, value:float=1.0, force_parity=True, store:bool=False):
         from aiida import orm
+        from math import isfinite
+        try:
+            distance = float(value)
+        except (TypeError, ValueError):
+            distance = 0.0
+        if not isfinite(distance) or distance <= 0:
+            raise ValueError(
+                f'Invalid kpoint density distance: {value!r}. The distance (in 1/Angstrom) '
+                'must be a finite, positive number.'
+            )
         self.kpoints = orm.KpointsData()
         self.kpoints.set_cell_from_structure(self.structure)
-        self.kpoints.set_kpoints_mesh_from_density(1.0 / value, force_parity=force_parity)
+        self.kpoints.set_kpoints_mesh_from_density(distance, force_parity=force_parity)
+        if store:
+            self.kpoints.store()
         
     def set_gamma_only(self):
         self.set_kmesh() # the default is Gamma.

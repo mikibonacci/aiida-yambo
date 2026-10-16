@@ -30,7 +30,11 @@ class OptionsModel(BaseModel):
     
 class MetadataModel(BaseModel):
     
-    options: OptionsModel = None
+    # NOTE: default to a (default) OptionsModel and not None: with `options=None`,
+    # `model_dump(exclude_none=True)` would collapse the whole metadata to {},
+    # which is then dropped by to_AiiDA_inputs, and set_ports would later crash
+    # with a KeyError('metadata') on the leaf (`pw`/`yambo`) namespaces.
+    options: OptionsModel = OptionsModel()
     
     model_config = ConfigDict(
         extra='allow',
@@ -54,7 +58,7 @@ class GeneralInputManager(BaseModel):
     )
     
     def set_time(self, time:int=86400):
-        self.metadata.resources.max_wallclock_seconds=time
+        self.metadata.options.max_wallclock_seconds=time
         
     def set_nodes(self, nodes:int=1):
         self.metadata.options.resources.num_machines=nodes
@@ -125,9 +129,13 @@ class GeneralInputManager(BaseModel):
             try:
                 #builder mode
                 results['metadata'] = inputs.metadata 
-            except:
-                #node mode
-                inputs.base.attributes.all['metadata_inputs']
+            except AttributeError:
+                #node mode: rebuild the metadata from the stored process options.
+                #NOTE: this branch must ASSIGN the value, not only compute it.
+                try:
+                    results['metadata'] = {'options': inputs.get_options()}
+                except Exception:
+                    results['metadata'] = {}
             
         return results
     
@@ -143,11 +151,14 @@ class GeneralInputManager(BaseModel):
         for k in processed_inputs:
             v = processed_inputs.get(k, None)
             if v is None: continue
+            if k in ['metadata','pseudos']:
+                # these are kept as they are, even when empty: set_ports relies on
+                # `metadata` being present under the leaf (`pw`/`yambo`) namespaces.
+                results[k] = v
+                continue
             if isinstance(v, (list,dict)):
                 if len(v)==0: continue
-            if k in ['metadata','pseudos']:
-                results[k] = v
-            elif isinstance(v, dict):
+            if isinstance(v, dict):
                 results[k] = orm.Dict(v)
             elif isinstance(v, list):
                 results[k] = orm.List(v)
@@ -188,7 +199,11 @@ class GeneralInputManager(BaseModel):
                 if len(v.ports) == 0:
                     skip_ports = True
             if k == 'metadata' and last_key in metadata_keys:
-                results[k] = processed_inputs[k] 
+                # the metadata may legitimately be absent (e.g. lost options on
+                # round-trips from stored inputs): skip it and let AiiDA fill
+                # the process defaults, rather than raising a KeyError.
+                if k in processed_inputs:
+                    results[k] = processed_inputs[k]
                 last_key=''
             elif k == 'metadata':
                 continue

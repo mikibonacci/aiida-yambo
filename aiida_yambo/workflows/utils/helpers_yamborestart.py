@@ -22,84 +22,56 @@ PAR_def_mode= "balanced"       # [PARALLEL] Default distribution mode ("balanced
 '''
 ################################################################################
 def fix_parallelism(resources, failed_calc):
+    """Reset parallelism to PAR_def_mode='balanced' on a failed calculation.
 
-    '''
-    bands, qp, last_qp, runlevels = find_gw_info(failed_calc.inputs)
-    nscf = find_pw_parent(failed_calc,calc_type=['nscf']) 
-    occupied = gap_mapping_from_nscf(nscf.pk,)['valence']
-    mesh = nscf.inputs.kpoints.get_kpoints_mesh()[0]
-    kpoints = gap_mapping_from_nscf(nscf.pk,)['number_of_kpoints']
+    The parallelism computation is delegated to :class:`ParallelismManager`
+    (single code path with the convergence updater); the legacy triple
+    ``(new_parallelism, new_resources, pop_list)`` is returned for the
+    yamborestart error handlers.
+    """
+    bundle = _fix_to_balanced(resources, failed_calc)
+    if bundle is None:
+        return False, False, False
+    return bundle.variables, bundle.resources, bundle.pop_keys
 
-    if 'gw0' or 'HF_and_locXC' in runlevels:
-        new_parallelism, new_resources = find_parallelism_qp(resources['num_machines'], resources['num_mpiprocs_per_machine'], \
-                                                        resources['num_cores_per_mpiproc'], bands, \
-                                                        occupied, qp, kpoints,\
-                                                        last_qp, namelist = {})
-    elif 'bse' in runlevels:
-        pass
-    '''
-    
-    pop_list = []
-    for p in failed_calc.inputs.parameters.get_dict()['variables']:
-        for k in ['CPU','ROLEs']:
-            if k in p:
-                pop_list.append(p)
+def _fix_to_balanced(resources, failed_calc):
+    from aiida_yambo.utils.parallelism_manager import ParallelismManager, RawInputsTarget
 
-    new_parallelism, new_resources = {'PAR_def_mode': "balanced"}, resources
-
-
-    return new_parallelism, new_resources, pop_list
+    instructions = {'automatic': [{'mode': 'balanced', 'resources': resources}]}
+    manager = ParallelismManager(RawInputsTarget(failed_calc.inputs), instructions)
+    return manager.resolve()
 
 def fix_memory(resources, failed_calc, exit_status, max_nodes, iteration):
-        
-    #bands, qp, last_qp, runlevels = find_gw_info(failed_calc.inputs)
-    #nscf = find_pw_parent(failed_calc,calc_type=['nscf']) 
-    #occupied = gap_mapping_from_nscf(nscf.pk,)['valence']
-    #mesh = nscf.inputs.kpoints.get_kpoints_mesh()[0]
-    #kpoints = gap_mapping_from_nscf(nscf.pk,)['number_of_kpoints']
+    """Handle a memory error by improving the mpi/openmp balance.
+
+    We increase the number of nodes (respecting ``max_nodes``) when possible and
+    swap MPI tasks for extra OpenMP threads when the machine has no GPU. The
+    parallelism profile itself is resolved through :class:`ParallelismManager`.
+    """
+    resources = copy.copy(resources)
+
     increase_nodes = False
-    if max_nodes > resources['num_machines']: # and iteration < 2:
+    if max_nodes > resources['num_machines']:  # and iteration < 2:
         increase_nodes = True
 
-    #tot_cores = resources['num_machines']*resources['num_mpiprocs_per_machine']*resources['num_cores_per_mpiproc']
-    
-    '''if resources['num_mpiprocs_per_machine']==1 or failed_calc.outputs.output_parameters.get_dict()['has_gpu'] or iteration > 1: #there should be a limit
-        
-        new_nodes = int(2*resources['num_machines'])
-        #new_nodes += new_nodes%2
-        
-        if new_nodes <= max_nodes:
-            resources['num_machines'] = new_nodes
-        elif max_nodes==0:
-            resources['num_machines'] = int(1)
-        else:
-            resources['num_machines'] = int(max_nodes)'''
-        
-    if resources['num_mpiprocs_per_machine']>1:
-        if increase_nodes: resources['num_machines'] = min(max_nodes,int(resources['num_machines']*1.5))
+    if resources['num_mpiprocs_per_machine'] > 1:
+        if increase_nodes:
+            resources['num_machines'] = min(max_nodes, int(resources['num_machines'] * 1.5))
 
-        if not failed_calc.outputs.output_parameters.get_dict()['has_gpu']:
-            resources['num_cores_per_mpiproc'] = int(resources['num_cores_per_mpiproc']*2)
-            resources['num_mpiprocs_per_machine'] = int(resources['num_mpiprocs_per_machine']/2)
+        try:
+            has_gpu = failed_calc.outputs.output_parameters.get_dict()['has_gpu']
+        except Exception:
+            has_gpu = False
 
-    pop_list = []
-    for p in failed_calc.inputs.parameters.get_dict()['variables']:
-        for k in ['CPU','ROLEs']:
-            if k in p:
-                pop_list.append(p)
+        if not has_gpu:
+            resources['num_cores_per_mpiproc'] = int(resources['num_cores_per_mpiproc'] * 2)
+            resources['num_mpiprocs_per_machine'] = int(resources['num_mpiprocs_per_machine'] / 2)
 
-    #if 'gw0' or 'HF_and_locXC' in runlevels:
-    #    new_parallelism, new_resources = find_parallelism_qp(resources['num_machines'], resources['num_mpiprocs_per_machine']/2, \
-                                                        #resources['num_cores_per_mpiproc']*2, bands, \
-                                                        #occupied, qp, kpoints,\
-                                                        #last_qp, namelist = {})
-    #elif 'bse' in runlevels:
-    #    pass
-    
-    new_parallelism, new_resources = {'PAR_def_mode': "balanced"}, resources   #balanced is more efficient the memory for now
+    bundle = _fix_to_balanced(resources, failed_calc)
+    if bundle is None:
+        return False, False, False
+    return bundle.variables, bundle.resources, bundle.pop_keys
 
-
-    return new_parallelism, new_resources, pop_list
 
 def fix_time(options, restart, max_walltime):
     options['max_wallclock_seconds'] = \

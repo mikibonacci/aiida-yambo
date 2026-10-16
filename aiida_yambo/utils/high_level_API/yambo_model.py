@@ -1,10 +1,12 @@
 ###### methods for easy interaction with AiiDA and yambopy data structures
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Literal, Union, Optional, Any, List
 from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, KpointMeshConvParam
 from aiida_yambo.utils.high_level_API.general_model import GeneralInputManager
 from aiida_yambo.utils.high_level_API.qe_model import PwBaseWorkChainInputManager
+
+from aiida.common import AttributeDict
 
 class YamboRestartInputManager(GeneralInputManager):
     
@@ -26,7 +28,8 @@ class YamboRestartInputManager(GeneralInputManager):
     
     def remove_arguments(self, remove_tags:list[str]=[]):
         for tag in remove_tags:
-            self.parameters['arguments'].remove(tag, None)
+            if tag in self.parameters.get('arguments', []):
+                self.parameters['arguments'].remove(tag)
             
     def set_arguments(self, add_tags:list[str]=[]):
         for tag in add_tags:
@@ -42,13 +45,13 @@ class YamboRestartInputManager(GeneralInputManager):
         
         """
         if value is not None:
-            self.parameters['variables'][name] = value
+            self.parameters.setdefault('variables', {})[name] = value
             
     def set_Nb(self, 
                setter_tags:list[Literal['BndsRnXs','BndsRnXp','BndsRnXm','GbndRnge',]]=['BndsRnXp','GbndRnge',], 
                value:Union[list, int, float]=None, add_if_not_present:bool=True):
         for variant in setter_tags:
-            if variant in self.parameters['variables'] or add_if_not_present:
+            if variant in self.parameters.get('variables', {}) or add_if_not_present:
                 if not value:
                     raise ValueError('value parameter cannot be None.')
                 if isinstance(value, int) or isinstance(value, float):
@@ -62,7 +65,7 @@ class YamboRestartInputManager(GeneralInputManager):
                  setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=['NGsBlkXp'], 
                  value:Union[list, int, float]=None, add_if_not_present:bool=True, units:Literal['Ry', 'RL', 'mRy']='Ry'):
         for variant in setter_tags:
-            if variant in self.parameters['variables'] or add_if_not_present:
+            if variant in self.parameters.get('variables', {}) or add_if_not_present:
                 if not value:
                     raise ValueError('value parameter cannot be None.')
                 if isinstance(value, int) or isinstance(value, float):
@@ -75,8 +78,11 @@ class YamboRestartInputManager(GeneralInputManager):
         self.set_Nb(setter_tags=setter_tags, value=value, add_if_not_present=add_if_not_present)
                 
     def set_BSEGcut(self,
-                    setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=['NGsBlkXs','BSENGBlk']):
-        self.set_Gcut(setter_tags=setter_tags)
+                    setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=['NGsBlkXs','BSENGBlk'],
+                    value:Union[list, int, float]=None, add_if_not_present:bool=True,
+                    units:Literal['Ry', 'RL', 'mRy']='Ry'):
+        self.set_Gcut(setter_tags=setter_tags, value=value,
+                      add_if_not_present=add_if_not_present, units=units)
                 
     def set_BSEbands(self, value:list[int]):
         #value = [v,c]
@@ -121,9 +127,56 @@ class YamboRestartInputManager(GeneralInputManager):
         return self.get_Gcut(search_tags=search_tags)
     
     def get_BSEbands(self,):
-        return self.parameters.get('variables',{}).get('BSEbands', None)
+        return self.parameters.get('variables',{}).get('BSEBands', None)
+
+    def generate_AiiDA_inputs(self, what='YamboRestart'):
+        """Export this flattened manager to a restart workchain or CalcJob."""
+        if what == 'YamboRestart':
+            from aiida_yambo.workflows.yamborestart import YamboRestart
+            process_class = YamboRestart
+        elif what == 'YamboCalculation':
+            from aiida_yambo.calculations.yambo import YamboCalculation
+            process_class = YamboCalculation
+        else:
+            raise ValueError(f'Unsupported process: {what}')
+        inputs = self.to_AiiDA_inputs(self.model_dump(exclude_none=True))
+        return self.set_ports(inputs, process_class.spec().inputs.ports,
+                              last_key='yambo' if what == 'YamboCalculation' else '')
     
     ############ END getter methods ############
+
+def _coerce_parameters_space(v):
+    """Rebuild raw parameter dicts into their precise Pydantic classes.
+
+    The Union annotation alone would resolve every single-variable scalar entry
+    to the base ConvParam (KpointMeshConvParam is a subclass), which would then
+    apply its int dtype and truncate float kpoint_density grids (e.g.
+    linspace(1.0, 0.4, 4, dtype=int) -> [1, 0, 0, 0]). Route by variable name so
+    kpoint params keep their density/mesh-specific behavior.
+    """
+    if v is None:
+        return []
+    out = []
+    for item in v:
+        if isinstance(item, (ConvParam, CoupledConvParam, KpointMeshConvParam)):
+            out.append(item)
+            continue
+        if not isinstance(item, dict):
+            raise ValueError(f'Invalid parameters_space entry: {item!r}')
+        variables = item.get('var', [])
+        if isinstance(variables, str):
+            variables = [variables]
+        kwargs = {k: val for k, val in item.items() if k != 'var'}
+        if len(variables) == 1:
+            if variables[0] in ('kpoint_mesh', 'kpoint_density'):
+                out.append(KpointMeshConvParam(var=variables[0], **kwargs))
+            else:
+                out.append(ConvParam(var=variables[0], **kwargs))
+        elif len(variables) == 2:
+            out.append(CoupledConvParam(var=variables, **kwargs))
+        else:
+            raise ValueError(f'Unsupported parameters_space dimensionality: {variables}')
+    return out
 
 class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalculations, so it's very easy to deal with them? maybe just utilities... mmm
     """Class to easily manage the interactions with AiiDA data belogining to inputs of Calculations and Workflows.
@@ -156,6 +209,11 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     workflow_settings: dict = {}
     parallelism_instructions: dict = None
     group_label: str = None
+
+    @field_validator('parameters_space', mode='before')
+    @classmethod
+    def _coerce_parameters_space(cls, v):
+        return _coerce_parameters_space(v)
     
     model_config = ConfigDict(
         extra='allow', # e.g. parent_folder.
@@ -202,7 +260,7 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         self.parent_folder = node
         if self.parent_folder is not None and update_pw_parameters:
             from aiida_yambo.utils.common_helpers import get_pw_inputs_builders
-            builder_scf, builder_nscf = get_pw_inputs_builders
+            builder_scf, builder_nscf = get_pw_inputs_builders(self.parent_folder)
                 
             if builder_scf:
                 dict_scf = YamboRestartInputManager.convert_from_AiiDA_data(builder_scf)
@@ -279,7 +337,7 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         self.qp.set_Nb(setter_tags, value, add_if_not_present)
         self.bse.set_Nb(setter_tags, value, add_if_not_present)
                 
-    def set_Gcut(self, setter_tags:list[str]=['NGsBlkXs','NGsBlkXp'], value:Union[list, int, float]=None, add_if_not_present:bool=False,units:Literal['Ry', 'RL', 'mRy']='Ry'):
+    def set_Gcut(self, setter_tags:list[str]=['NGsBlkXs','NGsBlkXp','BSENGBlk'], value:Union[list, int, float]=None, add_if_not_present:bool=False,units:Literal['Ry', 'RL', 'mRy']='Ry'):
         self.qp.set_Gcut(setter_tags, value, add_if_not_present,units)
         self.bse.set_BSEGcut(setter_tags, value, add_if_not_present,units)
     ############ END Redundant SETTER methods for yres easy access ############
@@ -293,8 +351,8 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         self.nscf.set_nbnd(value)
         
     def set_SOC(self,value=True):
-        self.scf.set_SOC()
-        self.nscf.set_SOC()
+        self.scf.set_SOC(value)
+        self.nscf.set_SOC(value)
         
     def set_pseudo_family(self, value:str):
         self.scf.set_pseudo_family(value)
@@ -336,7 +394,7 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     ######### START AiiDA getter STUFF #########
         
     def generate_AiiDA_inputs(self,
-        what:Literal['YamboCalculation', 'YamboRestart','YamboWorkflow','YamboConvergence','scf','nscf','qp']='YamboWorkflow',
+        what:Literal['YamboCalculation', 'YamboRestart','YamboWorkflow','YamboConvergence','scf','nscf','qp','bse']='YamboWorkflow',
     ):
         """This will return a dictionary with several stuff.
         
@@ -349,23 +407,33 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         
         TODO: generalize this and move it to the base class.
         """
+        if what in ('YamboRestart', 'YamboCalculation'):
+            # Standalone Yambo inputs occupy the same qp slot used by workflows.
+            manager = self.qp.model_copy(deep=False)
+            manager.parent_folder = self.parent_folder
+            return manager.generate_AiiDA_inputs(what)
+
         p = YamboRestartInputManager.to_AiiDA_inputs(
             self.model_dump(exclude_none=True, exclude={'scf', 'nscf', 'qp', 'bse'})
         )
         for key, manager in (('qp', self.qp), ('bse', self.bse),
                              ('scf', self.scf), ('nscf', self.nscf)):
             sub_inputs = YamboRestartInputManager.to_AiiDA_inputs(manager.model_dump(exclude_none=True))
-            if sub_inputs and GeneralInputManager._has_provided_inputs(manager):
+            # DEFENSIVE GUARD: `parameters` is mandatory for both YamboRestart
+            # and PwBaseWorkChain, so a namespace without it can never pass the
+            # process validation (e.g. required 'bse.yambo.code' not provided).
+            # This skips managers polluted by flag-only settings (INITIALISE...)
+            # or otherwise partially populated, instead of crashing at submit.
+            if (sub_inputs
+                    and GeneralInputManager._has_provided_inputs(manager)
+                    and len(getattr(manager, 'parameters', None) or {}) > 0):
                 p[key] = sub_inputs
         
         
-        from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
-        from aiida_yambo.workflows.yamborestart import YamboRestart
         from aiida_yambo.workflows.yambowf import YamboWorkflow
         from aiida_yambo.workflows.yamboconvergence import YamboConvergence
         
         class_ob = { #TOTEST
-            'YamboCalculation':YamboWorkflow,
             'scf': YamboWorkflow,
             'nscf': YamboWorkflow,
             'qp': YamboWorkflow,
@@ -388,14 +456,10 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         elif what in ['bse']:
             results = results['bse']
             results['parent_folder'] = p.get('parent_folder',None)
-        elif what in ['YamboCalculation']:
-            results = results['qp']['yambo']
-            results['parent_folder'] = p.get('parent_folder',None)
             
         return results
     
     def populate_builder(self, builder, what:Literal['YamboCalculation', 'YamboRestart','YamboWorkflow','YamboConvergence']='YamboWorkflow', skip:list[str]=[]):
-        from aiida.common import AttributeDict
         p = self.generate_AiiDA_inputs(what=what)
         pp = AttributeDict(p)
         for k,v in pp.items():
@@ -414,7 +478,9 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     ):
         """Fetches the nested inputs to get parameters and metadata.
         
-        Nesting is: YamboConvergence().inputs.ywfl.yres.yambo
+        Workflow nesting is ywfl.qp.yambo (or ywfl.bse.yambo).
+        Standalone restart and calculation inputs are placed under qp too;
+        parent_folder remains at the top level for all process types.
         
         A bit hardcoded but it's fine.
         """
@@ -429,6 +495,8 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         else:
             inputs = node_or_builder
         
+        inputs = AttributeDict(inputs)
+
         # this extract the highest level inputs
         results = YamboRestartInputManager.convert_from_AiiDA_data(inputs, get_metadata=what=='YamboCalculation')
         
@@ -436,6 +504,10 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
             
             case "YamboRestart":
                 results.update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.yambo, get_metadata=True))
+                results = {'qp': results, 'parent_folder': inputs.get('parent_folder')}
+
+            case "YamboCalculation":
+                results = {'qp': results, 'parent_folder': inputs.get('parent_folder')}
 
             case "YamboWorkflow": 
                 if 'qp' in inputs:
@@ -452,16 +524,25 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
                     results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.bse.yambo, get_metadata=True))
 
             case "YamboConvergence":
-                if 'qp' in inputs.ywfl:
-                    results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp)
-                    results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp.yambo, get_metadata=True))
-                if 'scf' in inputs.ywfl:
-                    results['scf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf)
-                    results['scf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf.pw, get_metadata=True))
-                if 'nscf' in inputs.ywfl:
-                    results['nscf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf)
-                    results['nscf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf.pw, get_metadata=True))
-                if 'bse' in inputs.ywfl:
-                    results['bse'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse)
-                    results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse.yambo, get_metadata=True))
+                try:
+                    # Flatten every leaf port exposed under the `ywfl` namespace
+                    # (QP_subsets_dict, additional_parsing, already_computed_QP_db,
+                    # clean_failed, parent_folder, ...). They are top-level leaves
+                    # of the YamboWorkflow inputs, but a namespace to us, so
+                    # convert_from_AiiDA_data at the top level skips them.
+                    results.update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl))
+                    if 'qp' in inputs.ywfl:
+                        results['qp'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp)
+                        results['qp'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.qp.yambo, get_metadata=True))
+                    if 'scf' in inputs.ywfl:
+                        results['scf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf)
+                        results['scf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.scf.pw, get_metadata=True))
+                    if 'nscf' in inputs.ywfl:
+                        results['nscf'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf)
+                        results['nscf'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.nscf.pw, get_metadata=True))
+                    if 'bse' in inputs.ywfl:
+                        results['bse'] = YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse)
+                        results['bse'].update(YamboRestartInputManager.convert_from_AiiDA_data(inputs.ywfl.bse.yambo, get_metadata=True))
+                except Exception as e:
+                    raise ValueError(e, inputs)
         return results

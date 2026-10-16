@@ -98,10 +98,16 @@ class The_Predictor_2D():
         self.res = copy.deepcopy(self.result[self.what].values[:] + self.Fermi)
         
         # Compute band energies in Rydbergs for comparison with calc convergence thresholds
-        try:
-            self.bb_Ry = copy.deepcopy(self.bande[0,np.array(self.result.BndsRnXp.values,dtype='int64')-1]/13.6)
-        except:
-            self.bb_Ry = copy.deepcopy(self.bande[0,-1]/13.6)
+        if isinstance(self.bande, (int, float, type(None))):
+            self.bb_Ry = 0
+        else:
+            try:
+                self.bb_Ry = copy.deepcopy(self.bande[0,np.array(self.result.BndsRnXp.values,dtype='int64')-1]/13.6)
+            except:
+                try:
+                    self.bb_Ry = copy.deepcopy(self.bande[0,-1]/13.6)
+                except:
+                    self.bb_Ry = 0
             
         # Apply Fermi offset to the result array as well
         self.r[:] = self.r[:] + self.Fermi
@@ -173,6 +179,10 @@ class The_Predictor_2D():
         print('fitting all simulations.')
         
         print(np.shape(1/(xdata[0]*xdata[1])))
+        # Need at least as many points as parameters (4) for a stable fit
+        if len(ydata) < 4:
+            print(f"Not enough data points ({len(ydata)}) for 2D fit (need >=4), skipping fit")
+            return False
             
         popt,pcov = curve_fit(f,xdata=xdata,
                       ydata=ydata,sigma=1/(xdata[0]*xdata[1]),
@@ -326,6 +336,13 @@ class The_Predictor_2D():
         return self.next_step
     
     def check_the_point(self,old_hints={}):
+        # Guard against missing keys (e.g. first grid after FIFO reset where
+        # old_hints only contains {'new_grid': True}). Treat as not reached.
+        if self.what not in old_hints or self.var_[0] not in old_hints or self.var_[1] not in old_hints:
+            self.point_reached = False
+            self.old_discrepancy = np.inf
+            self.index = [0]
+            return None
         
         self.old_discrepancy =abs(old_hints[self.what] - self.result[(self.result[self.var_[0]]==old_hints[self.var_[0]]) & \
             (self.result[self.var_[1]]==old_hints[self.var_[1]])][self.what].values[0])
@@ -352,13 +369,14 @@ class The_Predictor_2D():
         
         self.check_passed = True
         error = 10
+        ii, jj = 1, 1
 
         power_laws = [1,2]
         for i in power_laws:
             for j in power_laws:
                 print(i,j)
                 self.fit_space_2D(fit=True,alpha=i,beta=j,plot=False,dim=10, colormap='viridis',reference=reference,thr_fx=thr_fx,thr_fy=thr_fy,thr_fxy=thr_fxy)
-                if self.MAE_fit<error: 
+                if hasattr(self, 'MAE_fit') and self.MAE_fit<error:
                     ii,jj = i,j
                     error = self.MAE_fit
 

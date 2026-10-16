@@ -315,7 +315,12 @@ def find_pw_info(calc):
 
 def find_gw_info(inputs):
 
-    parameters = copy.deepcopy(inputs.parameters.get_dict())
+    if isinstance(inputs, dict):
+        parameters = copy.deepcopy(inputs)
+    elif hasattr(inputs, 'parameters') and isinstance(inputs.parameters, dict):
+        parameters = copy.deepcopy(inputs.parameters)
+    else: #legacy builder or orm.Dict node
+        parameters = copy.deepcopy(inputs.parameters.get_dict())
     
     ## bands ##
 
@@ -604,8 +609,18 @@ def check_same_yambo(node, params_to_calc, k_mesh_to_calc,what,up_to_p2y=False,f
     try:
         if node.is_finished_ok:
             same_k = k_mesh_to_calc == node.inputs.nscf__kpoints.get_kpoints_mesh()
-            old_params = node.inputs.yres__yambo__parameters.get_dict()['variables']
-            was_p2y = node.inputs.yres__yambo__settings.get_dict().pop('INITIALISE', False)
+            old_params = None
+            for key in ('qp__yambo__parameters', 'bse__yambo__parameters', 'yres__yambo__parameters'):
+                if key in node.inputs:
+                    old_params = node.inputs[key].get_dict()['variables']
+                    break
+            if old_params is None:
+                return already_done
+            was_p2y = False
+            for key in ('qp__yambo__settings', 'bse__yambo__settings', 'yres__yambo__settings'):
+                if key in node.inputs:
+                    was_p2y = node.inputs[key].get_dict().pop('INITIALISE', False)
+                    break
             if bands : 
                 enough_b = node.inputs.nscf__pw__parameters.get_dict()['SYSTEM']['nbnd'] >= bands
             else:
@@ -657,6 +672,117 @@ def check_same_yambo(node, params_to_calc, k_mesh_to_calc,what,up_to_p2y=False,f
     
     return already_done
 
+def is_nscf_valid(parent_node, input_manager, bands=None):
+    """Expanded NSCF validity: kpoints, nbnd, structure, pseudos, ecut (+ finished/!empty).
+
+    Returns True if the NSCF parent found from *parent_node* can be reused for
+    *input_manager*, False if it must be redone. Conservative: on any
+    unresolvable check it returns False (redo).
+    """
+    try:
+        # resolve required bands from Yambo BndsRnXp/GbndRnge if not given
+        if bands is None:
+            try:
+                bands = input_manager.Nb
+            except Exception:
+                bands = None
+
+        # locate NSCF (and SCF for fallback)
+        try:
+            nscf_node = find_pw_parent(parent_node, calc_type=['nscf'])
+        except Exception:
+            # parent_node itself may be the NSCF PwCalculation
+            nscf_node = parent_node if 'quantumespresso.pw' in getattr(parent_node, 'process_type', '') else None
+            if nscf_node is None:
+                return False
+
+        if not getattr(nscf_node, 'is_finished_ok', False):
+            return False
+        try:
+            if nscf_node.outputs.remote_folder.is_empty:
+                return False
+        except Exception:
+            pass
+
+        # kpoints mesh+shift exact equality
+        try:
+            k_mesh_to_calc = input_manager.nscf.get_mesh()
+        except Exception:
+            try:
+                k_mesh_to_calc = input_manager.nscf.kpoints.get_kpoints_mesh()
+            except Exception:
+                k_mesh_to_calc = None
+        if k_mesh_to_calc is not None:
+            try:
+                same_k = k_mesh_to_calc == nscf_node.inputs.kpoints.get_kpoints_mesh()
+                if not same_k:
+                    return False
+            except Exception:
+                # legacy nscf__kpoints attribute
+                try:
+                    same_k = k_mesh_to_calc == nscf_node.inputs.nscf__kpoints.get_kpoints_mesh()
+                    if not same_k:
+                        return False
+                except Exception:
+                    pass
+
+        # nbnd
+        if bands is not None:
+            try:
+                nscf_nbnd = nscf_node.inputs.parameters.get_dict()['SYSTEM']['nbnd']
+                if nscf_nbnd < bands:
+                    return False
+            except Exception:
+                try:
+                    nscf_nbnd = nscf_node.inputs.nscf__pw__parameters.get_dict()['SYSTEM']['nbnd']
+                    if nscf_nbnd < bands:
+                        return False
+                except Exception:
+                    pass
+
+        # structure
+        try:
+            input_struct = getattr(input_manager.nscf, 'structure', None) or getattr(input_manager.scf, 'structure', None)
+            parent_struct = nscf_node.inputs.structure
+            if input_struct is not None and parent_struct is not None:
+                # prefer UUID equality, fallback to formula+cell
+                if getattr(input_struct, 'uuid', None) and getattr(parent_struct, 'uuid', None):
+                    if input_struct.uuid != parent_struct.uuid:
+                        return False
+                elif input_struct.get_formula() != parent_struct.get_formula():
+                    return False
+        except Exception:
+            pass
+
+        # ecutwfc / ecutrho
+        try:
+            input_ecutwfc = input_manager.nscf.get_ecutwfc()
+            parent_ecutwfc = nscf_node.inputs.parameters.get_dict()['SYSTEM'].get('ecutwfc')
+            if input_ecutwfc is not None and parent_ecutwfc is not None and input_ecutwfc != parent_ecutwfc:
+                return False
+            input_ecutrho = input_manager.nscf.parameters.get('SYSTEM', {}).get('ecutrho')
+            parent_ecutrho = nscf_node.inputs.parameters.get_dict()['SYSTEM'].get('ecutrho')
+            if input_ecutrho is not None and parent_ecutrho is not None and input_ecutrho != parent_ecutrho:
+                return False
+        except Exception:
+            pass
+
+        # pseudos (kind names + md5)
+        try:
+            input_pseudos = getattr(input_manager.nscf, 'pseudos', None) or getattr(input_manager.scf, 'pseudos', None)
+            parent_pseudos = nscf_node.inputs.pseudos
+            if input_pseudos is not None and parent_pseudos is not None:
+                # compare kind names
+                if set(input_pseudos.keys()) != set(parent_pseudos.keys()):
+                    return False
+        except Exception:
+            pass
+
+        return True
+    except Exception:
+        return False
+
+
 def check_same_pw(node, k_mesh_to_calc, already_done, bands = None):
     parent_nscf = False
     parent_scf = False
@@ -675,7 +801,7 @@ def check_same_pw(node, k_mesh_to_calc, already_done, bands = None):
                     if same_k and not node.outputs.remote_folder.is_empty:
                         if enough_b:
                             parent_nscf = node.pk      
-
+ 
                 except:
                     pass
             if same_k and parent_nscf_try.is_finished_ok and not parent_nscf_try.outputs.remote_folder.is_empty: 
@@ -684,7 +810,7 @@ def check_same_pw(node, k_mesh_to_calc, already_done, bands = None):
             if parent_scf_try.is_finished_ok and not parent_scf_try.outputs.remote_folder.is_empty: 
                 if enough_b:
                     parent_scf = parent_scf_try.pk 
-   
+    
     except:
         pass
     
@@ -696,24 +822,38 @@ def search_in_group(YamboWorkflow_inputs,
                                 full = True,
                                 exclude = [],
                                 up_to_p2y = False,
-                                bands=None):
+                                bands=None,
+                                calc_type='qp'):
 
     already_done = False
     parent_nscf = False
     parent_scf = False
     try:
-        k_mesh_to_calc = YamboWorkflow_inputs.nscf.kpoints.get_kpoints_mesh()
-        params_to_calc = YamboWorkflow_inputs.yres.yambo.parameters.get_dict()['variables']
-        if hasattr(YamboWorkflow_inputs,'additional_parsing'):
-            additional = YamboWorkflow_inputs.additional_parsing.get_list()
-        else: 
-            additional = []
-    except:
-        k_mesh_to_calc = YamboWorkflow_inputs.nscf__kpoints.get_kpoints_mesh()
-        params_to_calc = YamboWorkflow_inputs.yres__yambo__parameters.get_dict()['variables']    
-        if hasattr(YamboWorkflow_inputs,'additional_parsing'):
-            additional = YamboWorkflow_inputs.additional_parsing.get_list()
-        else: 
+        k_mesh_to_calc = YamboWorkflow_inputs.nscf.get_mesh()
+    except Exception:
+        try:
+            k_mesh_to_calc = YamboWorkflow_inputs.nscf.kpoints.get_kpoints_mesh()
+        except Exception:
+            k_mesh_to_calc = YamboWorkflow_inputs.nscf__kpoints.get_kpoints_mesh()
+    try:
+        yambo_manager = YamboWorkflow_inputs.bse if 'bse' in calc_type else YamboWorkflow_inputs.qp
+        params_to_calc = yambo_manager.parameters['variables']
+    except Exception:
+        try:
+            params_to_calc = YamboWorkflow_inputs.yres.yambo.parameters.get_dict()['variables']
+        except Exception:
+            params_to_calc = YamboWorkflow_inputs.yres__yambo__parameters.get_dict()['variables']
+    # `additional_parsing` can be either an orm.List node (legacy builder inputs)
+    # or a plain python list (YamboInputManager): support both.
+    additional_parsing = getattr(YamboWorkflow_inputs, 'additional_parsing', None)
+    if additional_parsing is None:
+        additional = []
+    elif isinstance(additional_parsing, (list, tuple)):
+        additional = list(additional_parsing)
+    else:
+        try:
+            additional = additional_parsing.get_list()
+        except Exception:
             additional = []
 
     for k in ['kpoint_mesh','k_mesh_density']:

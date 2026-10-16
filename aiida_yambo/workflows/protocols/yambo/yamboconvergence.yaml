@@ -22,10 +22,10 @@ default_inputs:
             delta: 2
             max: 40
         kpoint_density:
-            start: 0.8
-            stop: 0.2
-            delta: 1
-            max: 0.1
+            start: 1.25
+            stop: 5.0
+            delta: 2.0
+            max: 10.0
     ywfl:
         protocol: 'fast'
     workflow_settings:
@@ -61,10 +61,10 @@ protocols:
                 'max': 40,
             }
             kpoint_density: {
-                'start': 0.8,
-                'stop': 0.2,
-                'delta': 1,
-                'max': 0.1,
+                'start': 1.25,
+                'stop': 5.0,
+                'delta': 2.0,
+                'max': 10.0,
             }
         ywfl:
             protocol:'moderate'

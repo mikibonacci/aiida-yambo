@@ -2,6 +2,12 @@
 from __future__ import absolute_import
 import sys
 import warnings
+from contextlib import contextmanager
+from copy import deepcopy
+
+from aiida.common import AttributeDict
+from aiida_yambo.utils.high_level_API.yambo_model import YamboRestartInputManager
+from aiida_yambo.utils.high_level_API.general_model import ResourcesModel
 
 from aiida.orm import RemoteData
 from aiida.orm import Str, Dict, Int, Bool, StructureData
@@ -209,36 +215,60 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         # setup #
         self.ctx.inputs = self.exposed_inputs(YamboCalculation, 'yambo')
 
-    def validate_parameters(self):
-        """validation of the input parameters... including settings and the namelist...
-           for example, the parallelism namelist is different from version the version... 
-           we need some input helpers to fix automatically this with respect to the version of yambo
+    @contextmanager
+    def _edit_inputs(self):
+        """Edit Python data locally, then commit changes to the restart inputs.
+
+        ``ctx.inputs`` remains the sole persistent input state. Codes, file nodes
+        and unrelated ports retain their identity; unchanged Dict nodes are reused.
+        Do not inject the manager's resource defaults into scheduler metadata.
         """
-        new_para = check_para_namelists(self.ctx.inputs.parameters.get_dict()['variables'], self.inputs.code_version.value)
-        if new_para:
-            self.ctx.inputs.parameters = update_dict(self.ctx.inputs.parameters, list(new_para.keys()), list(new_para.values()),sublevel='variables')
-            self.report('adjusting parallelism namelist... please check yambo documentation')
-        
-        try:
-            new_para = check_variables(self.ctx.inputs.parameters.get_dict())
+        inputs = self.ctx.inputs
+        parameters = inputs.parameters.get_dict()
+        settings = inputs.settings.get_dict() if 'settings' in inputs else {}
+        metadata = deepcopy(inputs.get('metadata', {}))
+        parent = inputs.get('parent_folder')
+        manager = YamboRestartInputManager(
+            parameters=deepcopy(parameters), settings=deepcopy(settings),
+            metadata=metadata, parent_folder=parent,
+        )
+        yield manager
+        if manager.parameters != parameters:
+            inputs.parameters = Dict(manager.parameters)
+        if manager.settings != settings:
+            inputs.settings = Dict(manager.settings)
+        updated_metadata = manager.metadata.model_dump(exclude_unset=True)
+        if updated_metadata != metadata:
+            inputs.metadata = AttributeDict(updated_metadata)
+        if manager.parent_folder is not parent:
+            if manager.parent_folder is None:
+                inputs.pop('parent_folder', None)
+            else:
+                inputs.parent_folder = manager.parent_folder
+
+    def validate_parameters(self):
+        """Normalize Yambo variables and check the available NSCF bands."""
+        with self._edit_inputs() as manager:
+            new_para = check_para_namelists(manager.parameters['variables'], self.inputs.code_version.value)
             if new_para:
-                self.ctx.inputs.parameters = update_dict(self.ctx.inputs.parameters, list(new_para.keys()), list(new_para.values()),sublevel='variables')
-                self.report('adjusting bse namelist... please check yambo documentation')
-        except:
-            pass #self.report('Issue in check_variables.')
+                manager.parameters['variables'].update(new_para)
+                self.report('adjusting parallelism namelist... please check yambo documentation')
+            try:
+                new_para = check_variables(manager.parameters)
+                if new_para:
+                    manager.parameters['variables'].update(new_para)
+                    self.report('adjusting bse namelist... please check yambo documentation')
+            except Exception:
+                pass
+            required_bands = manager.get_Nb()
 
-        
         try:
-            nscf_parent = find_pw_parent(take_calc_from_remote(self.inputs.parent_folder,level=-1))
-        except:
-            nscf_parent = take_calc_from_remote(self.inputs.parent_folder,level=-1)
-        yambo_bandsX = self.ctx.inputs.parameters.get_dict()['variables'].pop('BndsRnXp',[[0],''])[0][-1]
-        yambo_bandsSc = self.ctx.inputs.parameters.get_dict()['variables'].pop('GbndRnge',[[0],''])[0][-1]
-
-        if nscf_parent.inputs.parameters.get_dict()['SYSTEM']['nbnd'] < max(yambo_bandsX,yambo_bandsSc):
-            self.report('You must run an nscf with nbnd at least =  {}'.format(max(yambo_bandsX,yambo_bandsSc)))
+            nscf_parent = find_pw_parent(take_calc_from_remote(self.inputs.parent_folder, level=-1))
+        except Exception:
+            nscf_parent = take_calc_from_remote(self.inputs.parent_folder, level=-1)
+        if nscf_parent.inputs.parameters.get_dict()['SYSTEM']['nbnd'] < required_bands:
+            self.report('You must run an nscf with nbnd at least =  {}'.format(required_bands))
             return self.exit_codes.LOW_NUMBER_OF_NSCF_BANDS
-
 
     def validate_resources(self):
         """validation of machines... completeness and with respect para options
@@ -265,7 +295,8 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         :param action: a string message with the action taken
         """
         arguments = [calculation.process_label, calculation.pk, calculation.exit_status, calculation.exit_message]
-        self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'ITERATION', self.ctx.iteration)
+        with self._edit_inputs() as manager:
+            manager.settings['ITERATION'] = self.ctx.iteration
         self.report('{}<{}> failed with exit status {}: {}'.format(*arguments))
         self.report('Action taken: {}'.format(action))
 
@@ -286,9 +317,9 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         we copy the SAVE already created, if any.
         """
         
-        self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'COPY_SAVE', True)
-        self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'ITERATION', self.ctx.iteration)                   
-        
+        with self._edit_inputs() as manager:
+            manager.settings['COPY_SAVE'] = True
+
         self.report_error_handled(calculation, 'Trying to copy the SAVE folder and restart')
         return ProcessHandlerReport(True)
     
@@ -300,14 +331,14 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         we increase the simulation time and copy the database already created.
         """
         
-        self.ctx.inputs.metadata.options = fix_time(self.ctx.inputs.metadata.options, self.ctx.iteration, self.inputs.max_walltime)
-        self.ctx.inputs.parent_folder = calculation.outputs.remote_folder
-        self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'ITERATION', self.ctx.iteration)
-        
-        if calculation.outputs.output_parameters.get_dict()['yambo_wrote_dbs']:
-            #self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'RESTART_YAMBO', True) # to link the dbs in aiida.out 
-            self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'COPY_DBS', True)                   
-        
+        with self._edit_inputs() as manager:
+            options = manager.metadata.options.model_dump(exclude_unset=True)
+            options = fix_time(options, self.ctx.iteration, self.inputs.max_walltime.value)
+            manager.set_time(options['max_wallclock_seconds'])
+            manager.set_parent_folder(calculation.outputs.remote_folder)
+            if calculation.outputs.output_parameters.get_dict()['yambo_wrote_dbs']:
+                manager.settings['COPY_DBS'] = True
+
         self.report_error_handled(calculation, 'walltime error detected, so we increase time: {} \
                                                 seconds and link outputs'\
                                                 .format(int(self.ctx.inputs.metadata.options['max_wallclock_seconds'])))
@@ -319,24 +350,15 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         Handle calculations for a parallelism error; 
         we try to change the parallelism options.
         """
-        new_para, new_resources, pop_list  = fix_parallelism(self.ctx.inputs.metadata.options.resources, calculation)
-        self.ctx.inputs.metadata.options.resources = new_resources
-        self.ctx.inputs.metadata.options.prepend_text =self.ctx.inputs.metadata.options.prepend_text + "\nexport OMP_NUM_THREADS="+str(new_resources['num_cores_per_mpiproc'])
-        self.ctx.inputs.parameters = update_dict(self.ctx.inputs.parameters, list(new_para.keys()), list(new_para.values()), sublevel='variables',pop_list= pop_list)
-
-        self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'ITERATION', self.ctx.iteration)
-        '''new_para = check_para_namelists(new_para, self.inputs.code_version.value)
-        if new_para:
-            self.ctx.inputs.parameters = update_dict(self.ctx.inputs.parameters, list(new_para.keys()), list(new_para.values()),sublevel='variables')
-            self.report('adjusting parallelism namelist... please check yambo documentation')'''
-
-        
-        if calculation.outputs.output_parameters.get_dict()['yambo_wrote_dbs']:
-            self.ctx.inputs.parent_folder = calculation.outputs.remote_folder
-            #self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'RESTART_YAMBO',True) # to link the dbs in aiida.out
-            self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'COPY_DBS', True)                   
-
-
+        with self._edit_inputs() as manager:
+            new_para, new_resources, pop_list = fix_parallelism(
+                manager.metadata.options.resources.model_dump(exclude_unset=True), calculation)
+            if new_para is False or new_resources is False:
+                return ProcessHandlerReport(True, self.exit_codes.ERROR_UNRECOVERABLE_FAILURE)
+            self._apply_parallelism_fix(manager, new_para, new_resources, pop_list)
+            if calculation.outputs.output_parameters.get_dict()['yambo_wrote_dbs']:
+                manager.set_parent_folder(calculation.outputs.remote_folder)
+                manager.settings['COPY_DBS'] = True
 
         self.report_error_handled(calculation, 'parallelism error detected, so we try to fix it setting PAR_def_mode= "balanced"')
         return ProcessHandlerReport(True)
@@ -350,25 +372,17 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         if cpu_per_task(mpi/node) is already set to 1, we can increase the number of nodes,
         accordingly to the inputs permissions.
         """
-        self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'ITERATION', self.ctx.iteration)
-        
-        new_para, new_resources, pop_list  = fix_memory(self.ctx.inputs.metadata.options.resources, calculation, calculation.exit_status,
-                                                self.inputs.max_number_of_nodes, self.ctx.iteration)
-        self.ctx.inputs.metadata.options.resources = new_resources
-        self.ctx.inputs.metadata.options.prepend_text =self.ctx.inputs.metadata.options.prepend_text + "\nexport OMP_NUM_THREADS="+str(new_resources['num_cores_per_mpiproc'])
-        self.ctx.inputs.parameters = update_dict(self.ctx.inputs.parameters, list(new_para.keys()), list(new_para.values()),sublevel='variables',pop_list= pop_list)
-
-            
-        '''new_para = check_para_namelists(new_para, self.inputs.code_version.value)
-        if new_para:
-            self.ctx.inputs.parameters = update_dict(self.ctx.inputs.parameters, list(new_para.keys()), list(new_para.values()),sublevel='variables')
-            self.report('adjusting parallelism namelist... please check yambo documentation')'''
-
-
-        if calculation.outputs.output_parameters.get_dict()['yambo_wrote_dbs']:
-            self.ctx.inputs.parent_folder = calculation.outputs.remote_folder
-            #self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'RESTART_YAMBO',True) # to link the dbs in aiida.out
-            self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'COPY_DBS', True)                     
+        with self._edit_inputs() as manager:
+            new_para, new_resources, pop_list = fix_memory(
+                manager.metadata.options.resources.model_dump(exclude_unset=True),
+                calculation, calculation.exit_status, self.inputs.max_number_of_nodes.value,
+                self.ctx.iteration)
+            if new_para is False or new_resources is False:
+                return ProcessHandlerReport(True, self.exit_codes.ERROR_UNRECOVERABLE_FAILURE)
+            self._apply_parallelism_fix(manager, new_para, new_resources, pop_list)
+            if calculation.outputs.output_parameters.get_dict()['yambo_wrote_dbs']:
+                manager.set_parent_folder(calculation.outputs.remote_folder)
+                manager.settings['COPY_DBS'] = True
 
         self.report_error_handled(calculation, 'memory error detected, so we change mpi-openmpi balance and set PAR_def_mode= "balanced"')
         return ProcessHandlerReport(True)
@@ -380,14 +394,21 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         redo the calculation, trying to delete the wrong fragment and recompute it.
         """
 
-        #self.ctx.inputs.metadata.options.prepend_text = "export OMP_NUM_THREADS="+str(new_resources['num_cores_per_mpiproc'])
-        self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'ITERATION', self.ctx.iteration)
-        
-        if calculation.outputs.output_parameters.get_dict()['yambo_wrote_dbs']:
-            corrupted_fragment = calculation.outputs.output_parameters.get_dict()['corrupted_fragment']
-            self.ctx.inputs.parent_folder = calculation.outputs.remote_folder
-            self.ctx.inputs.metadata.options.prepend_text =self.ctx.inputs.metadata.options.prepend_text + "\nrm aiida.out/"+str(corrupted_fragment)
-            self.ctx.inputs.settings = update_dict(self.ctx.inputs.settings,'COPY_DBS', True)                     
+        with self._edit_inputs() as manager:
+            output_parameters = calculation.outputs.output_parameters.get_dict()
+            if output_parameters['yambo_wrote_dbs']:
+                corrupted_fragment = output_parameters['corrupted_fragment']
+                manager.set_parent_folder(calculation.outputs.remote_folder)
+                manager.set_prepend_text("\nrm aiida.out/" + str(corrupted_fragment))
+                manager.settings['COPY_DBS'] = True
 
         self.report_error_handled(calculation, 'Variable NOT DEFINED error detected, so we restart and recompute the corrupted fragment')
         return ProcessHandlerReport(True)
+
+    @staticmethod
+    def _apply_parallelism_fix(manager, variables, resources, pop_list):
+        """Apply a resolved parallelism change to the local input manager."""
+        manager.metadata.options.resources = ResourcesModel(**resources)
+        manager.set_prepend_text("\nexport OMP_NUM_THREADS=" + str(resources['num_cores_per_mpiproc']))
+        manager.parameters.setdefault('variables', {}).update(variables)
+        manager.remove_variables(pop_list)

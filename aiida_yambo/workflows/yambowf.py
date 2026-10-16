@@ -647,6 +647,20 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             self.ctx.should_run_QP_splitter = True
         if has_bse_inputs:
             self.ctx.should_run_bse = True
+
+        if just_init:
+            # pre-calculation "up to p2y": run only the FIRST yambo step, which
+            # carries INITIALISE=True and thus performs p2y + yambo initialization
+            # only. The QP splitter and the trailing qp/bse step must not run: with
+            # a yambo parent the INITIALISE flag is bypassed (calculations/yambo.py)
+            # and a real qp/bse would be launched without QP corrections.
+            self.ctx.should_run_QP_splitter = False
+            if has_qp_inputs:
+                self.ctx.should_run_qp = True
+                self.ctx.should_run_bse = False
+            else:
+                self.ctx.should_run_qp = False
+                self.ctx.should_run_bse = True
         
         if not hasattr(self.ctx.input_manager, 'parent_folder'):
             self.report('No parent folder, we start from scratch.')
@@ -681,14 +695,38 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             
             self.ctx.calc = parent
             
-        # check nbnd is fine:
-        if not self.ctx.input_manager.has_enough_nbnd:
-            self.report(f'Setting nbnd={self.ctx.input_manager.Nb} in the NSCF step, not enough bands: {self.ctx.input_manager.nscf_nbnd}<{self.ctx.input_manager.Nb}')
-            self.ctx.input_manager.set_nscf_nbnd(self.ctx.input_manager.Nb)
-            # we redo nscf if not enough bands, we cannot proceed with yambo or QP_splitter:
+        # check nbnd and overall NSCF validity (beyond nbnd, also kpoints/structure/pseudos/ecut)
+        # has_enough_nbnd is the fast nbnd-only gate; is_nscf_valid does the full check
+        nscf_valid = True
+        try:
+            # check against the current parent calc if any
+            if hasattr(self.ctx, 'calc') and self.ctx.calc is not None:
+                from aiida_yambo.utils.common_helpers import is_nscf_valid
+                nscf_valid = is_nscf_valid(parent_node=self.ctx.calc, input_manager=self.ctx.input_manager)
+        except Exception:
+            nscf_valid = self.ctx.input_manager.has_enough_nbnd
+
+        if not self.ctx.input_manager.has_enough_nbnd or not nscf_valid:
+            if not self.ctx.input_manager.has_enough_nbnd:
+                self.report(f'Setting nbnd={self.ctx.input_manager.Nb} in the NSCF step, not enough bands: {self.ctx.input_manager.nscf_nbnd}<{self.ctx.input_manager.Nb}')
+                self.ctx.input_manager.set_nscf_nbnd(self.ctx.input_manager.Nb)
+            else:
+                self.report(f'NSCF invalid for current inputs (kpoints/structure/pseudos/ecut mismatch) — recomputing NSCF')
+            # we redo nscf if not enough bands (or invalid), we cannot proceed with yambo or QP_splitter:
             if self.ctx.all_calcs_to_do[0] in ['qp', 'QP_splitter', 'bse']:
                 self.report(f"Recomputing NSCF step with nbnd={self.ctx.input_manager.nscf_nbnd}")
                 if 'scf' in self.ctx.all_calcs_to_do: self.ctx.all_calcs_to_do.remove('scf')
+                # re-insert nscf at front (after scf if it remains, else at 0)
+                if 'nscf' not in self.ctx.all_calcs_to_do:
+                    insert_idx = self.ctx.all_calcs_to_do.index('scf') + 1 if 'scf' in self.ctx.all_calcs_to_do else 0
+                    self.ctx.all_calcs_to_do.insert(insert_idx, 'nscf')
+                # rewire parent to SCF remote (not the stale NSCF/Yambo one)
+                try:
+                    scf_parent = find_pw_parent(self.ctx.calc, calc_type=['scf'])
+                    self.ctx.input_manager.set_parent_folder(scf_parent.outputs.remote_folder)
+                    self.ctx.calc = scf_parent
+                except Exception:
+                    pass
             
         self.ctx.splitted_QP = []
         self.ctx.qp_splitter = 0
@@ -840,6 +878,12 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 if not 'subsets' in self.ctx.input_manager.QP_subsets_dict.keys():
                     if 'explicit' in self.ctx.input_manager.QP_subsets_dict.keys():
                         self.ctx.input_manager.QP_subsets_dict['subsets'] = QP_list_merger(self.ctx.input_manager.QP_subsets_dict['explicit'],
+                                                                        self.ctx.input_manager.QP_subsets_dict['qp_per_subset'],
+                                                                        consider_only=consider_only)
+                    else:
+                        self.report('No QP subsets defined (no boundaries/explicit/range_QP): building default full-range QP subsets')
+                        self.ctx.input_manager.QP_subsets_dict['subsets'] = QP_list_merger(
+                                                                        [[1, mapping['number_of_kpoints'], 1, self.ctx.input_manager.Nb]],
                                                                         self.ctx.input_manager.QP_subsets_dict['qp_per_subset'],
                                                                         consider_only=consider_only)
 

@@ -1,23 +1,15 @@
-# No need to import fixtures - added by pytest "automagically"
+"""Small, deterministic tests for the Yambo CalcJob specification.
 
-def test_p2y_calculation(aiida_local_code_factory, clear_database):
-    from aiida.engine import run
-    from aiida.plugins import CalculationFactory
+Running a real p2y process belongs in an integration test with a Yambo
+executable and retrieved fixtures.  The old test was an unfinished template
+and prevented the suite from being a reliable smoke test.
+"""
 
-    preprocessing_code = aiida_local_code_factory(entry_point='yambo.yambo', executable='p2y')
-    code = aiida_local_code_factory(entry_point='yambo.yambo', executable='yambo')
-    # ...
-    inputs = { 
-            'code': code,
-            'preprocessing_code': preprocessing_code,
-            'parent_folder':parent,
-            'precode_parameters' : orm.Dict(dict={}),
-            'settings' : orm.Dict(dict={'INITIALISE': True, 'COPY_DBS': False}),
-            'parameters': orm.Dict(dict={'arguments': [],'variables': {}}),
-            }
+from aiida_yambo.calculations.yambo import YamboCalculation
 
-    # submit a calculation using this code ...
-    result = run(CalculationFactory('yambo.yambo'), **inputs)
 
-    # check outputs of calculation
-    assert result['...'] == ...
+def test_yambo_spec_declares_p2y_inputs():
+    ports = YamboCalculation.spec().inputs
+    assert 'preprocessing_code' in ports
+    assert 'precode_parameters' in ports
+    assert ports['settings'].valid_type is not None
