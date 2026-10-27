@@ -1,20 +1,11 @@
 # -*- coding: utf-8 -*-
 """helpers for k_path"""
-from __future__ import absolute_import
-import numpy as np
-from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt, style
-import pandas as pd
-import copy
-import os
+import logging
 from itertools import permutations
 
-try:
-    from aiida.orm import Dict, Str, List, load_node, KpointsData, RemoteData, Group
-    from aiida.plugins import CalculationFactory, DataFactory
-    from aiida.engine import calcfunction 
-except:
-    pass
+import numpy as np
+
+LOGGER = logging.getLogger(__name__)
 
 class k_path_dealer():
     
@@ -51,7 +42,8 @@ class k_path_dealer():
         #needed_kpoints = k_path.kpts[:ind]
         return mapping, ind, {'names':names,'ticks':ticks}
     
-    def check_kpoints_in_bare_mesh(self,mesh,kcell,structure,k_list={}):
+    def check_kpoints_in_bare_mesh(self,mesh,kcell,structure,k_list=None):
+        k_list = {} if k_list is None else k_list
         grid = self.get_mesh(mesh, kcell)
         cell = structure.get_cell()
         k = cell.bandpath()
@@ -78,7 +70,8 @@ class k_path_dealer():
         return missing, maps
 
     @classmethod
-    def check_kpoints_in_qe_grid(self,qe_grid,structure,k_list={}):
+    def check_kpoints_in_qe_grid(self,qe_grid,structure,k_list=None):
+        k_list = {} if k_list is None else k_list
         cell = structure.get_cell()
         k = cell.bandpath()
         high_symmetry = k.special_points
@@ -92,7 +85,7 @@ class k_path_dealer():
                 for k in permutations(g):
                     test = abs(abs(np.array(k))-abs(high_symmetry[point]))
                     if test.dot(test) < 1e-4:
-                        print(point,ind)
+                        LOGGER.debug('%s %s', point, ind)
                         found = True
                         maps[point] = ind
                         break
