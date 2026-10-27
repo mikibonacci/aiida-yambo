@@ -2,30 +2,17 @@
 """
 Plugin to create a YPP input file and run a calculation with the ypp executable.
 """
-from __future__ import absolute_import
-import os
-from tokenize import Single
 import six
-
-from aiida.engine import CalcJob
+from yambopy.io.inputfile import YamboIn
 
 from aiida.common.datastructures import CalcInfo
-from aiida.common.datastructures import CalcJobState
-from aiida.common.exceptions import UniquenessError, InputValidationError, ValidationError
-from aiida.common.utils import classproperty
-
-from aiida.orm import Code
+from aiida.common.exceptions import InputValidationError
+from aiida.engine import CalcJob
+from aiida.orm import ArrayData, Code, List, RemoteData, load_node
 from aiida.orm.nodes import Dict
-from aiida.orm.nodes import RemoteData, BandsData, ArrayData, FolderData
+from aiida.plugins import CalculationFactory, DataFactory
 
-from aiida.plugins import DataFactory, CalculationFactory
-
-from aiida.common import AIIDA_LOGGER
-from aiida.common import LinkType
-
-from aiida_yambo.utils.common_helpers import * 
-
-from yambopy.io.inputfile import YamboIn
+from aiida_yambo.utils.common_helpers import take_calc_from_remote
 
 PwCalculation = CalculationFactory('quantumespresso.pw')
 YamboCalculation = CalculationFactory('yambo.yambo')
@@ -188,7 +175,7 @@ class YppCalculation(CalcJob):
 
         try:
             parent_calc = take_calc_from_remote(parent_calc_folder,level=-1)
-        except:
+        except Exception:
             parent_calc = take_calc_from_remote(parent_calc_folder,level=0)
 
         yambo_parent = False
@@ -236,7 +223,7 @@ class YppCalculation(CalcJob):
             if not hasattr(self.inputs,'QP_DB') and hasattr(self.inputs,'parent_folder'): 
                 try:
                     local_copy_list.append((take_calc_from_remote(self.inputs.parent_folder).outputs.QP_DB.uuid, self.inputs.QP_DB.filename, 'ndb.QP'))
-                except:
+                except Exception:
                     return self.exit_codes.PARENT_NOT_VALID
             
             params_dict['variables']['Seed'] = 'aiida' #self.metadata.options.input_filename.replace('.in','') # depends on the QE seedname, I guess
@@ -286,7 +273,7 @@ class YppCalculation(CalcJob):
 
         try:
             parent_calc = parent_calc_folder.get_incoming().all_nodes()[-1] #to load the node from a workchain...
-        except:
+        except IndexError:
             parent_calc = parent_calc_folder.get_incoming().get_node_by_label('remote_folder')
 
         if copy_save:
@@ -294,7 +281,7 @@ class YppCalculation(CalcJob):
         else:
             try:
                 remote_symlink_list.append((parent_calc_folder.computer.uuid,parent_calc_folder.get_remote_path()+"/SAVE/",'./SAVE/'))
-            except:
+            except (AttributeError, TypeError):
                 remote_symlink_list.append((parent_calc_folder.computer.uuid,parent_calc_folder.get_remote_path()+"out/aiida.save/SAVE/",'./SAVE/'))
 
         if copy_dbs:
