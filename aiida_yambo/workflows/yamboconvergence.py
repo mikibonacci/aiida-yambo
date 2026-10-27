@@ -72,6 +72,38 @@ def _to_jsonable(obj):
         return _to_jsonable(obj.tolist())
     return obj
 
+def _parameter_names(parameters):
+    """All the variable names handled by a convergence parameter, mirrors included."""
+    names = set(parameters.var)
+    mirrors = parameters.mirror_values
+    if isinstance(mirrors, dict):
+        for mirrored in mirrors.values():
+            names.update(mirrored)
+    else:
+        names.update(mirrors)
+    return names
+
+def select_convergence_parameters(available, requested):
+    """Select, in the requested order, the convergence parameters of `available`.
+
+    Each entry of `requested` is a variable name or a list of names (coupled
+    parameters, mirrored ones included, e.g. ['BndsRnXp','GbndRnge','NGsBlkXp']).
+    """
+    selected = []
+    for entry in requested:
+        names = {entry} if isinstance(entry, str) else set(entry)
+        for parameters in available:
+            if set(parameters.var) <= names <= _parameter_names(parameters):
+                if parameters not in selected:
+                    selected.append(parameters)
+                break
+        else:
+            raise ValueError(
+                f'Unknown convergence parameter {entry!r}. Available: '
+                f'{[sorted(_parameter_names(p)) for p in available]}'
+            )
+    return selected
+
 class YamboConvergence(ProtocolMixin, WorkChain):
 
     """This workflow will perform yambo convergences with respect to some parameter. It can be used also to run multi-parameter
@@ -179,7 +211,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         protocol:str='moderate',
         calc_type:Literal['qp', 'bse', 'bse@qp']='qp',
         workflow_settings:dict=None,
-        convergence_parameters:list=['FFTGvecs',['BndsRnXp','GbndRnge','NGsBlkXp'],'kpoint_density'],
+        convergence_parameters:list=None,
         overrides:dict={},
         NLCC:bool=False,
         RIM_v:bool=False,
@@ -194,8 +226,12 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
         :return: a process builder instance with all inputs defined ready for launch.
         
-        By default, we will do convergence on: 'FFTGvecs','BndsRnXp','GbndRnge','NGsBlkXp','kpoint_density'
+        By default, we will do convergence on: 'FFTGvecs','kpoint_density' and then the coupled
+        'BndsRnXp','GbndRnge','NGsBlkXp' (k-points are skipped for molecules)
         using the automated workflow as described in Bonacci et al. npj Comput Mater 9, 74 (2023).
+
+        `convergence_parameters` selects which of them to converge, and in which order, e.g.
+        ['FFTGvecs', ['BndsRnXp','GbndRnge','NGsBlkXp']]: coupled parameters go in a nested list.
         """
 
         # Setting the inputs: merging protocols and overrides
@@ -287,7 +323,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         G_delta=meta_parameters['G_vectors']['delta']
 
         ######################### PARAMETERS SPACE CREATION #########################
-        input_manager.parameters_space = [
+        all_parameters = [
             ConvParam('FFTGvecs',                start=FFT_start,stop=FFT_stop,delta=FFT_delta,max=FFT_max,
                 steps=4,max_iterations=4,conv_thr=meta_parameters['convergence_thesholds']['FFTgvecs'],
                 conv_thr_units='%',convergence_algorithm='new_algorithm_1D', units='Ry'),
@@ -301,9 +337,18 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 mirror_values={'BndsRnXp':['GbndRnge']},),
         ]
 
+        if convergence_parameters is None:
+            # default selection and order: FFTGvecs, kpoint_density, (BndsRnXp, NGsBlkXp)
+            parameters_space = all_parameters
+        else:
+            parameters_space = select_convergence_parameters(all_parameters, convergence_parameters)
+
         if protocol == 'molecule' or structure.pbc.count(True)==0:
-            input_manager.parameters_space = input_manager.parameters_space[::2] #no k-points, so we skip the second element in the parameters_space.
-        
+            #no k-points, so we skip them in the parameters_space.
+            parameters_space = [p for p in parameters_space if not isinstance(p, KpointMeshConvParam)]
+
+        input_manager.parameters_space = parameters_space
+
         new_builder = input_manager.populate_builder(builder, what='YamboConvergence')
         
         return new_builder

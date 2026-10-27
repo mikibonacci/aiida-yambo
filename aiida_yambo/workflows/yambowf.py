@@ -45,11 +45,11 @@ def clean(node):
                     if not called_descendant.is_finished_ok:
                         called_descendant.outputs.remote_folder._clean()  # pylint: disable=protected-access
                         cleaned_calcs.append(called_descendant.pk)
-                except:
+                except Exception:
                     pass
 
     if cleaned_calcs:
-        return "cleaned remote folders of calculations: {}".format(join(map(str, cleaned_calcs)))
+        return "cleaned remote folders of calculations: {}".format(', '.join(map(str, cleaned_calcs)))
 
 def sanity_check_QP(v,c,input_db,output_db,create=True):
     d = xarray.open_dataset(input_db,engine='netcdf4')
@@ -83,6 +83,17 @@ def sanity_check_QP(v,c,input_db,output_db,create=True):
 
     return output_db,fit_v,fit_c
 
+def valence_conduction_bands(nelectrons, soc):
+    """Return the (1-based) indices of the highest occupied and lowest empty band.
+
+    With spin-orbit coupling each (spinor) band holds one electron, otherwise two.
+    """
+    if soc:
+        valence = int(nelectrons)
+    else:
+        valence = int(nelectrons/2) + int(nelectrons%2)
+    return valence, valence + 1
+
 @calcfunction
 def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_db=orm.List([])): #just to have something that works, but it is not correct to proceed this way
         ywfl = load_node(ywfl_pk.value)
@@ -95,12 +106,7 @@ def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_
         nk = pw.outputs.output_parameters.get_dict()['number_of_k_points']
         qp_rules = qp_settings.get_dict()
 
-        if SOC:
-            valence = int(nelectrons)
-            conduction = valence + 1
-        else:
-            valence = int(nelectrons/2) + int(nelectrons%2)
-            conduction = valence + 1
+        valence, conduction = valence_conduction_bands(nelectrons, SOC)
         string_run = 'yambopy mergeqp'
         
         # Create temporary directory
@@ -149,12 +155,7 @@ def extend_QP(filenames_List,output_name,ywfl_pk,qp_settings,QP): #just to have 
     nk = pw.outputs.output_parameters.get_dict()['number_of_k_points']
     qp_rules = qp_settings.get_dict()
 
-    if SOC:
-        valence = int(nelectrons)
-        conduction = valence + 2
-    else:
-        valence = int(nelectrons/2) + int(nelectrons%2)
-        conduction = valence + 1
+    valence, conduction = valence_conduction_bands(nelectrons, SOC)
     #output_name = QP._repository._repo_folder.abspath + '/path/ndb.QP_fixed'
     with tempfile.TemporaryDirectory() as dirpath:
         # Open the output file from the AiiDA storage and copy content to the temporary file
@@ -184,71 +185,65 @@ def extend_QP(filenames_List,output_name,ywfl_pk,qp_settings,QP): #just to have 
             QP_db_extended = SingleFileData(str(output_name).replace('fixed','extended'))
             return QP_db_extended
 
-def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1):
-    fermi = find_pw_parent(ywfl).outputs.output_parameters.get_dict()['fermi_energy']
-    SOC = find_pw_parent(ywfl).outputs.output_parameters.get_dict()['spin_orbit_calculation']
-    nelectrons = find_pw_parent(ywfl).outputs.output_parameters.get_dict()['number_of_electrons']
-    kpoints = find_pw_parent(ywfl).outputs.output_band.get_kpoints()
-    bands = find_pw_parent(ywfl).outputs.output_band.get_bands()
+def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1,max_iterations=30):
+    pw = find_pw_parent(ywfl)
+    fermi = pw.outputs.output_parameters.get_dict()['fermi_energy']
+    SOC = pw.outputs.output_parameters.get_dict()['spin_orbit_calculation']
+    nelectrons = pw.outputs.output_parameters.get_dict()['number_of_electrons']
+    kpoints = pw.outputs.output_band.get_kpoints()
+    bands = pw.outputs.output_band.get_bands()
     
-    if SOC:
-        valence = int(nelectrons) - 1
-        conduction = valence + 2
-    else:
-        valence = int(nelectrons/2) + int(nelectrons%2)
-        conduction = valence + 1
+    valence, conduction = valence_conduction_bands(nelectrons, SOC)
     print('valence: {}'.format(valence))    
     
     #tol = 10*(-max(bands[:,valence-1])+(min(bands[:,conduction-1])))/2
     mid_gap_energy = max(bands[:,valence-1])+(min(bands[:,conduction-1])-max(bands[:,valence-1]))/2
     
-    QP = []
-    print(tol,QP,np.where(abs(bands-mid_gap_energy)<tol)[1])
-    if len(np.where(abs(bands-mid_gap_energy)<tol)[1])<2:
-        print('#1 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
-        tol=tol*1.5
-    
-        return QP_mapper(ywfl,tol=tol,full_bands=full_bands)
-    
-    print('test passato')
+    # each time the selection is not good enough we increase the energy range of 50%.
+    for _ in range(max_iterations):
+        QP = []
+        selected = np.where(abs(bands-mid_gap_energy)<tol)
+        print(tol,QP,selected[1])
+        if len(selected[1])<2:
+            print('#1 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
+            tol=tol*1.5
+            continue
         
-    if not full_bands:
-        for i,j in zip(np.where(abs(bands-mid_gap_energy)<tol)[0],np.where(abs(bands-mid_gap_energy)<tol)[1]):
-            QP.append([i+1,i+1,j+1,j+1])
-    else:
-        b_min = np.where(abs(bands-mid_gap_energy)<tol)[1].min()
-        b_max = np.where(abs(bands-mid_gap_energy)<tol)[1].max()
-        for i in range(len(kpoints)):
-            QP.append([i+1,i+1,b_min+1,b_max+1])
-                
-    v,c = False,False
-    if len(QP)<1:
-        print('#2 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
-        return QP_mapper(ywfl,tol=tol*1.5,full_bands=full_bands)
-    
-    for i in QP:
-        if valence >= i[-1]: v = True
-        if conduction <= i[-1]: c = True
-        if valence >= i[-2]: v = True
-        if conduction <= i[-2]: c = True
-    
-    if not v or not c:
-        print('#3 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
-        return QP_mapper(ywfl,tol=tol*1.5,full_bands=full_bands)
+        if not full_bands:
+            for i,j in zip(selected[0],selected[1]):
+                QP.append([i+1,i+1,j+1,j+1])
+        else:
+            b_min = selected[1].min()
+            b_max = selected[1].max()
+            for i in range(len(kpoints)):
+                QP.append([i+1,i+1,b_min+1,b_max+1])
+                    
+        v,c = False,False
+        if len(QP)<1:
+            print('#2 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
+            tol=tol*1.5
+            continue
         
-    print('Found {} QPs'.format(len(QP
-                                   )))
-    
-    plt.plot(bands-mid_gap_energy,'-o')
-    plt.plot(np.where(abs(bands-mid_gap_energy)<tol)[0],bands[np.where(abs(bands-mid_gap_energy)<tol)]-mid_gap_energy,'o',label='to be computed explicitely')
-    plt.ylim(-0.25,0.25)
-    
-    print('Fermi level={} eV'.format(fermi))
+        for i in QP:
+            if valence >= i[-1]: v = True
+            if conduction <= i[-1]: c = True
+            if valence >= i[-2]: v = True
+            if conduction <= i[-2]: c = True
+        
+        if not v or not c:
+            print('#3 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
+            tol=tol*1.5
+            continue
+            
+        print('Found {} QPs'.format(len(QP)))
+        print('Fermi level={} eV'.format(fermi))
 
-    b_min_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].min()
-    b_max_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].max()
-    
-    return QP, [b_min_scissored,b_max_scissored]
+        b_min_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].min()
+        b_max_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].max()
+        
+        return QP, [b_min_scissored,b_max_scissored]
+
+    raise ValueError('QP_mapper: no QP selection containing both valence and conduction states found after {} enlargements of the energy range.'.format(max_iterations))
 
 def QP_subset_groups(nnk_i,nnk_f,bb_i,bb_f,qp_per_subset):
     
@@ -274,13 +269,10 @@ def QP_list_merger(l=[],qp_per_subset=10,consider_only=[-1],already_computed_QP_
         for k in list(range(qp_set[0],qp_set[1]+1)):
             for b in list(range(qp_set[2],qp_set[3]+1)):
                 
+                # skip the QP if it is already in at least one of the databases
                 skip = False
                 if already_computed_QP_db is not None:
-                    for QP_db in already_computed_QP_db:
-                        if check_already_computed(QP_db, b, k):
-                            skip=True
-                        else:
-                            skip=False
+                    skip = any(check_already_computed(QP_db, b, k) for QP_db in already_computed_QP_db)
                 
                 if not skip:
                     if (b in consider_only) or (consider_only[0]==-1):
@@ -406,6 +398,15 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
         spec.input("already_computed_QP_db", valid_type=orm.List, required=False,
                    help="list of qp db pks already computed, so we don't need to compute all the QP in QP splitter")
+
+        spec.input(
+            "stop_if_metal",
+            valid_type=bool,
+            required=False,
+            default=lambda: False,
+            non_db=True,
+            help="stop after NSCF if the DFT band analysis predicts a metallic system",
+        )
   
 
 ##################################### OUTLINE ####################################
@@ -414,6 +415,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             #cls.validate_parameters,
             cls.setup,
             while_(cls.can_continue)(
+                    cls.check_nscf_metallicity,
                     cls.perform_next,
             ),
             cls.report_wf,
@@ -438,6 +440,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                              message='The workchain failed with an unrecoverable error.')
         spec.exit_code(302, 'ERROR_MISSING_BAND_REGION',
                              message='The merged QP database does not contain both valence and conduction states.')
+        spec.exit_code(303, 'ERROR_METALLIC_SYSTEM',
+                             message='The NSCF calculation predicts a metallic system.')
     
     @classmethod
     def get_protocol_filepath(cls):
@@ -713,7 +717,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             else:
                 self.report(f'NSCF invalid for current inputs (kpoints/structure/pseudos/ecut mismatch) — recomputing NSCF')
             # we redo nscf if not enough bands (or invalid), we cannot proceed with yambo or QP_splitter:
-            if self.ctx.all_calcs_to_do[0] in ['qp', 'QP_splitter', 'bse']:
+            if self.ctx.all_calcs_to_do[0] in ['qp', 'QP splitter', 'bse']:
                 self.report(f"Recomputing NSCF step with nbnd={self.ctx.input_manager.nscf_nbnd}")
                 if 'scf' in self.ctx.all_calcs_to_do: self.ctx.all_calcs_to_do.remove('scf')
                 # re-insert nscf at front (after scf if it remains, else at 0)
@@ -758,6 +762,50 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             self.report('The workflow is finished')
             return False
 
+    @staticmethod
+    def _resolve_nscf_calculation(node):
+        """Return the NSCF calculation associated with a workflow or Yambo node."""
+
+        try:
+            if node.process_type == 'aiida.calculations:quantumespresso.pw':
+                return node if find_pw_type(node) == 'nscf' else None
+            return find_pw_parent(node, calc_type=['nscf'])
+        except Exception:
+            return None
+
+    def check_nscf_metallicity(self):
+        """Analyse the NSCF bands and optionally stop before any Yambo run."""
+
+        if hasattr(self.ctx, 'mapping'):
+            return
+
+        # In a fresh workflow this is the iteration immediately following the
+        # NSCF.  With a supplied parent, the first iteration can already be a
+        # QP/BSE step, so inspect that parent as well.
+        if not hasattr(self.ctx, 'calc'):
+            return
+        if self.ctx.calc_to_do == 'scf':
+            return
+
+        nscf_calculation = self._resolve_nscf_calculation(self.ctx.calc)
+        if nscf_calculation is None:
+            return
+
+        try:
+            mapping = gap_mapping_from_nscf(nscf_calculation.pk)
+        except Exception as exception:
+            self.report(f'Unable to derive the NSCF mapping: {exception}')
+            return self.exit_codes.ERROR_WORKCHAIN_FAILED
+
+        self.ctx.mapping = mapping
+        if self.inputs.stop_if_metal and mapping.get('dft_predicted') == 'metal':
+            self.report(
+                'The NSCF mapping predicts a metallic system '
+                f'(gap={mapping.get("nscf_gap_eV")}); stopping before Yambo.'
+            )
+            self.out('nscf_mapping', store_Dict(mapping))
+            return self.exit_codes.ERROR_METALLIC_SYSTEM
+
     def perform_next(self):
         """This function  will submit the next step, depending on the information provided in the context.
 
@@ -771,8 +819,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         if hasattr(self.ctx, 'calc'):
             calc = self.ctx.calc
             if not calc.is_finished_ok:
-                # we allow some QP calc to fail.
-                if self.ctx.calc_to_do=='QP_splitter': pass
+                # NOTE: failures of the splitted QP runs are checked in run_post_process.
                 self.report("last calculation failed, exiting the workflow")
                 return self.exit_codes.ERROR_WORKCHAIN_FAILED
 
@@ -843,8 +890,11 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 
 
                 self.ctx.input_manager.clean_workdir = True # AAA: we do not set orm.Bool(True), as the generate_AiiDA_inputs will create the AiiDA nodes needed: otherwise, it will be in the ctx, but not stored: it will except.
-                mapping = gap_mapping_from_nscf(find_pw_parent(take_calc_from_remote(self.ctx.calc.outputs.remote_folder,level=-1)).pk)
-                self.ctx.mapping = mapping
+                if hasattr(self.ctx, 'mapping'):
+                    mapping = self.ctx.mapping
+                else:
+                    mapping = gap_mapping_from_nscf(find_pw_parent(take_calc_from_remote(self.ctx.calc.outputs.remote_folder,level=-1)).pk)
+                    self.ctx.mapping = mapping
 
                 consider_only = self.ctx.input_manager.QP_subsets_dict.get('consider_only',[-1]) #[1,64], a range.
                 self.ctx.input_manager.QP_subsets_dict['consider_only'] = consider_only
@@ -858,16 +908,16 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                                                                     full_bands=self.ctx.input_manager.QP_subsets_dict.get('full_bands',False),
                                                                     spectrum_tol=self.ctx.input_manager.QP_subsets_dict.get('range_spectrum',Energy_region),
                                                                 )
+                if hasattr(self.ctx.input_manager,'already_computed_QP_db'):
+                    already_computed = self.ctx.input_manager.already_computed_QP_db
+                else:
+                    already_computed = None
+
                 if 'boundaries' in self.ctx.input_manager.QP_subsets_dict:
                     k_i=self.ctx.input_manager.QP_subsets_dict['boundaries'].pop('ki',1)
                     k_f=self.ctx.input_manager.QP_subsets_dict['boundaries'].pop('kf',mapping['number_of_kpoints'])
                     b_i=self.ctx.input_manager.QP_subsets_dict['boundaries']['bi']
                     b_f=self.ctx.input_manager.QP_subsets_dict['boundaries']['bf']
-
-                    if hasattr(self.ctx.input_manager,'already_computed_QP_db'):
-                        already_computed = self.ctx.input_manager.already_computed_QP_db
-                    else:
-                        already_computed = None
 
                     self.ctx.input_manager.QP_subsets_dict['subsets'] = QP_list_merger([[k_i,k_f,b_i,b_f]],
                                                                       self.ctx.input_manager.QP_subsets_dict['qp_per_subset'],
@@ -879,13 +929,15 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     if 'explicit' in self.ctx.input_manager.QP_subsets_dict.keys():
                         self.ctx.input_manager.QP_subsets_dict['subsets'] = QP_list_merger(self.ctx.input_manager.QP_subsets_dict['explicit'],
                                                                         self.ctx.input_manager.QP_subsets_dict['qp_per_subset'],
-                                                                        consider_only=consider_only)
+                                                                        consider_only=consider_only,
+                                                                        already_computed_QP_db = already_computed)
                     else:
                         self.report('No QP subsets defined (no boundaries/explicit/range_QP): building default full-range QP subsets')
                         self.ctx.input_manager.QP_subsets_dict['subsets'] = QP_list_merger(
                                                                         [[1, mapping['number_of_kpoints'], 1, self.ctx.input_manager.Nb]],
                                                                         self.ctx.input_manager.QP_subsets_dict['qp_per_subset'],
-                                                                        consider_only=consider_only)
+                                                                        consider_only=consider_only,
+                                                                        already_computed_QP_db = already_computed)
 
                 #self.report('subsets: {}'.format(self.ctx.input_manager.QP_subsets_dict['subsets']))
                 
@@ -918,10 +970,13 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             if self.ctx.calc_to_do == 'bse' and len(self.ctx.all_calcs_to_do) == 0:
                 self.ctx.all_calcs_to_do = ['bse']
             
-            self.run_post_process()
-            
             self.ctx.merge_QP_needed = False
-            
+
+            # run_post_process returns an exit code on failure: propagate it.
+            exit_code = self.run_post_process()
+            if exit_code is not None:
+                return exit_code
+
             return
         
         elif self.ctx.calc_to_do == 'bse':
@@ -990,7 +1045,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         # we need both valence and conduction states to proceed (BSE, extended QP db...):
         has_valence = merge_result['has_valence'].value
         has_conduction = merge_result['has_conduction'].value
-        if not has_valence or not has_conduction and self.ctx.should_run_bse:
+        if (not has_valence or not has_conduction) and (self.ctx.should_run_bse or self.ctx.input_manager.QP_subsets_dict['extend_db']):
             missing = 'valence and conduction' if not has_valence and not has_conduction \
                 else ('conduction' if not has_conduction else 'valence')
             self.report('The merged QP database does not contain {} states, exiting the workflow'.format(missing))
@@ -1068,7 +1123,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             if hasattr(self.ctx.input_manager, "clean_failed"):
                 if self.ctx.input_manager.clean_failed: 
                     message = clean(calc.caller)
-                    self.report(message)
+                    if message:
+                        self.report(message)
         else:
             self.report("workflow NOT completed successfully")
             return self.exit_codes.ERROR_WORKCHAIN_FAILED
