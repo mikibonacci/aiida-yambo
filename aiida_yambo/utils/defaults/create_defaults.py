@@ -1,19 +1,5 @@
 # -*- coding: utf-8 -*-
 """default input creation"""
-from __future__ import absolute_import
-import numpy as np
-from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt, style
-import pandas as pd
-import copy
-import json
-
-try:
-    from aiida.orm import Dict, Str, load_node, KpointsData, RemoteData
-    from aiida.plugins import CalculationFactory, DataFactory
-    from aiida_yambo.utils.common_helpers import *
-except:
-    pass
 
 scf = {"SYSTEM": {"nbnd": int(20), "ecutwfc": 60.0, "force_symmorphic": True}, "CONTROL": {"verbosity": "high", "wf_collect": True, "calculation": "scf"}, "ELECTRONS": {"conv_thr": 1e-08, "mixing_beta": 0.7, "mixing_mode": "plain", "diago_full_acc": True, "diago_thr_init": 5e-06}}
 nscf = {"SYSTEM": {"nbnd": int(500), "ecutwfc": 60.0, "force_symmorphic": True}, "CONTROL": {"verbosity": "high", "wf_collect": True, "calculation": "nscf"}, "ELECTRONS": {"conv_thr": 1e-08, "mixing_beta": 0.6, "mixing_mode": "plain", "diago_full_acc": True, "diago_thr_init": 5e-06, "diagonalization": "david"}}
@@ -44,7 +30,7 @@ def create_quantumespresso_inputs(structure, bands_gw=None, spin_orbit=False, wh
     '''
     try:
         Z_valence, Ecut = periodical(structure.get_ase())
-    except:
+    except AttributeError: # already an ase Atoms object
         Z_valence, Ecut = periodical(structure)
 
     occupied = int(Z_valence/2 + Z_valence%2)
