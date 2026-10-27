@@ -1,45 +1,29 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import
-
 import copy
 import math
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 
 from aiida import orm
-from aiida.orm import Dict, Str, Bool, KpointsData, List, load_node, Group, load_group
 from aiida.common.exceptions import NotExistent
-from aiida.engine import WorkChain, while_ , if_
-from aiida.engine import ToContext
-from aiida.plugins import WorkflowFactory
-
+from aiida.engine import ToContext, WorkChain, if_, while_
+from aiida.orm import Group, load_node
 from aiida_quantumespresso.common.types import ElectronicType, SpinType
-
-from aiida_yambo.workflows.utils.helpers_aiida_yambo import *
-from aiida_yambo.workflows.utils.helpers_workflow import *
-from aiida_yambo.utils.common_helpers import *
-from aiida_yambo.workflows.utils.helpers_yambowf import *
-
-from aiida_yambo.workflows.utils.parameters import (
-    ConvParam,
-    CoupledConvParam,
-    KpointMeshConvParam,
-    load_parameter_space
-)
-
-from aiida_yambo.workflows.utils.convergence import (
-    ConvergenceEvaluator
-)
-
 from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
-from typing import Literal
-
-from aiida_yambo.workflows.yambowf import YamboWorkflow
-
-#### IMPORT THE NEW BASEMODEL MANAGER FOR INPUTS ####
+from aiida_yambo.utils.common_helpers import (
+    find_pw_parent, is_nscf_valid, search_in_group, store_Dict, take_calc_from_remote,
+)
+# the new BaseModel manager for the inputs
 from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
+from aiida_yambo.workflows.utils.convergence import ConvergenceEvaluator
+from aiida_yambo.workflows.utils.helpers_aiida_yambo import take_quantities, updater
+from aiida_yambo.workflows.utils.helpers_workflow import build_parallelism_instructions
+from aiida_yambo.workflows.utils.helpers_yambowf import quantumespresso_input_validator
+from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, KpointMeshConvParam
+from aiida_yambo.workflows.yambowf import YamboWorkflow
 
 # Columns shared by every convergence record (mirrors update_story_global + pk-based).
 # The per-parameter value columns (parameters.var) and the `what` result columns
@@ -72,6 +56,16 @@ def _to_jsonable(obj):
     if isinstance(obj, np.ndarray):
         return _to_jsonable(obj.tolist())
     return obj
+
+def _max_bands(parameters_list):
+    """The largest number of bands the convergence parameters (`ConvParam` or `CoupledConvParam`) can reach."""
+    band_max = 0
+    for parameters in parameters_list:
+        for idx, var in enumerate(parameters.var):
+            if 'bnd' in var.lower():
+                vmax = parameters.max[idx] if isinstance(parameters.max, list) else parameters.max
+                band_max = max(band_max, int(vmax))
+    return band_max
 
 def _get_convergence_thresholds(meta_parameters):
     """Convergence thresholds (in %) of the protocol.
@@ -313,7 +307,6 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         k_delta = -(1.0 / kd['stop'] - 1.0 / (kd['stop'] + k_pseudo_step))
 
         # Getting information on the nelectrons, ecutwfc and volume
-        nelectrons, ecutwfc = periodical(structure.get_ase()) #nelectrons just as hint for later, not guaranteed to be correct (different pseudos can have different nelectrons)
         ecutwfc = input_manager.scf.parameters['SYSTEM']['ecutwfc']
         volume = structure.get_ase().get_volume()
         
@@ -631,7 +624,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                                 unit = prev_params.units
                             else:
                                 unit = prev_params.units[prev_params.var.index(var)]
-                        except Exception:
+                        except (ValueError, IndexError, TypeError):
                             unit = 'Ry' if var.lower() == 'fftgvecs' else ''
                         # mirror handling (e.g. BndsRnXp -> GbndRnge)
                         mirror_cfg = getattr(prev_params, 'mirror_values', None)
@@ -719,20 +712,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             evaluator.concurrent_steps_count = evaluator.parameters.steps - 1
 
         # Anticipate max bands for p2y decision (ceiling over remaining + current)
-        try:
-            sources = list(self.ctx.input_manager.parameters_space) + [evaluator.parameters]
-            band_max = 0
-            for p in sources:
-                for idx, var in enumerate(p.var):
-                    if 'bnd' in var.lower() or 'gbnd' in var.lower():
-                        try:
-                            vmax = p.max[idx] if isinstance(p.max, list) else p.max
-                            band_max = max(band_max, int(vmax))
-                        except Exception:
-                            pass
-            self.ctx.max_bands_needed = band_max
-        except Exception:
-            self.ctx.max_bands_needed = 0
+        self.ctx.max_bands_needed = _max_bands(list(self.ctx.input_manager.parameters_space) + [evaluator.parameters])
 
         self.report(f'Prepared grid with {len(self.ctx.params_space)} points, max_bands_needed={self.ctx.max_bands_needed}')
 
@@ -771,7 +751,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 break
             
             # Your updater stays the same, but passes explicit objects/grids cleanly
-            self.ctx.input_manager, values, already_done, parent_nscf = updater(
+            self.ctx.input_manager, values, already_done, _ = updater(
                 input_manager=self.ctx.input_manager,
                 evaluator=evaluator,
                 explicit_value=self.ctx.params_space, 
@@ -849,7 +829,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                                     fixed_val = raw[0]
                                 else:
                                     fixed_val = raw
-                            except Exception:
+                            except (IndexError, TypeError):
                                 fixed_val = None
                             break
                     row[var] = fixed_val
@@ -957,7 +937,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                     # take the first (and only) row's gap
                     try:
                         actual_gap = float(df_batch.iloc[0][what])
-                    except Exception:
+                    except (TypeError, ValueError):
                         actual_gap = df_batch.iloc[0][what]
                 # threshold
                 conv_thr = getattr(evaluator.parameters, 'conv_thr', 0.05)
@@ -968,7 +948,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                     ref = evaluator.hints.get('E_ref', pred_gap)
                     try:
                         thr = abs(float(ref)) * float(conv_thr) / 100.0 if ref is not None else float(conv_thr)
-                    except Exception:
+                    except (TypeError, ValueError):
                         thr = float(conv_thr)
                 else:
                     thr = float(conv_thr)
@@ -1040,14 +1020,14 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 self.ctx.convergence_summary['uuid'] = summary['last_converged_uuid']
                 try:
                     self.ctx.convergence_summary['pk'] = load_node(summary['last_converged_uuid']).pk
-                except Exception:
-                    pass
+                except NotExistent:
+                    self.report(f"The converged calculation {summary['last_converged_uuid']} is not in the database.")
                 if summary.get('hints', {}).get('already_computed'):
                     summary['hints']['uuid'] = summary['last_converged_uuid']
                     try:
                         summary['hints']['pk'] = load_node(summary['last_converged_uuid']).pk
-                    except Exception:
-                        pass
+                    except NotExistent:
+                        pass # already reported above
                     self.ctx.hint = dict(summary['hints'])
             for var in evaluator.parameters.var:
                 if var in summary.get('hints', {}):
@@ -1078,8 +1058,8 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                     summary['hints']['uuid'] = summary['last_converged_uuid']
                     try:
                         summary['hints']['pk'] = load_node(summary['last_converged_uuid']).pk
-                    except Exception:
-                        pass
+                    except NotExistent:
+                        pass # already reported above
                     # also reflect in the flat hints for report_wf
                     self.ctx.hint = dict(summary['hints'])
                 # value-match ONLY within the evaluated batch (so only the
@@ -1097,11 +1077,11 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                         try:
                             hv = float(hint_vals[var].item() if isinstance(hint_vals[var], np.generic) else hint_vals[var])
                             mask_match = mask_match & (eval_df[var].astype(float).round(6) == round(hv, 6))
-                        except Exception:
+                        except (TypeError, ValueError):
                             try:
                                 mask_match = mask_match & (eval_df[var] == hint_vals[var])
-                            except Exception:
-                                pass
+                            except (TypeError, ValueError, KeyError):
+                                self.report(f'Could not compare the values of {var} with the converged one, not using it to mark the converged row.')
                 # restrict to useful
                 if 'useful' in eval_df.columns:
                     mask_match = mask_match & eval_df['useful'].astype(bool)
@@ -1208,6 +1188,13 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             self.ctx.run_p2y = self._evaluate_p2y_needed()
         return self.ctx.run_p2y
 
+    def _set_parent_from(self, pk):
+        """Set the remote folder of the calculation `pk` as parent. If it has none, report it and keep the current parent."""
+        try:
+            self.ctx.input_manager.set_parent_folder(load_node(pk).outputs.remote_folder)
+        except (NotExistent, AttributeError, KeyError) as exc:
+            self.report(f'Could not use the calculation {pk} as parent ({type(exc).__name__}: {exc}).')
+
     def _capped_nscf_bands(self, required_bands):
         """Apply `bands_nscf_update` to the number of bands to be computed in the NSCF.
 
@@ -1245,37 +1232,21 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             already_done, parent_nscf, parent_scf = search_in_group(self.ctx.input_manager, self.ctx.group, calc_type=self.ctx.calc_type, up_to_p2y=True)
 
             if already_done:
-                try:
-                    self.ctx.input_manager.set_parent_folder(load_node(already_done).outputs.remote_folder)
-                except Exception:
-                    pass
+                self._set_parent_from(already_done)
                 return False
 
             if parent_nscf:
                 # full NSCF validity (kpoints, nbnd, structure, pseudos, ecut) — not just kpoints/nbnd
-                try:
-                    from aiida_yambo.utils.common_helpers import is_nscf_valid
-                    if not is_nscf_valid(load_node(parent_nscf), self.ctx.input_manager):
-                        parent_nscf = False
-                    else:
-                        self.ctx.input_manager.set_parent_folder(load_node(parent_nscf).outputs.remote_folder)
-                except Exception:
-                    try:
-                        self.ctx.input_manager.set_parent_folder(load_node(parent_nscf).outputs.remote_folder)
-                    except Exception:
-                        pass
+                if not is_nscf_valid(load_node(parent_nscf), self.ctx.input_manager):
+                    parent_nscf = False
+                else:
+                    self._set_parent_from(parent_nscf)
                 if not parent_nscf and parent_scf:
-                    try:
-                        self.ctx.input_manager.set_parent_folder(load_node(parent_scf).outputs.remote_folder)
-                    except Exception:
-                        pass
+                    self._set_parent_from(parent_scf)
             elif parent_scf:
-                try:
-                    self.ctx.input_manager.set_parent_folder(load_node(parent_scf).outputs.remote_folder)
-                except Exception:
-                    pass
+                self._set_parent_from(parent_scf)
 
-            scf_params, nscf_params, redo_nscf, self.ctx.bands, messages = quantumespresso_input_validator(self.ctx.input_manager, calc_type=self.ctx.calc_type)
+            _, nscf_params, _, self.ctx.bands, messages = quantumespresso_input_validator(self.ctx.input_manager, calc_type=self.ctx.calc_type)
             self.report(messages)
             self.ctx.gwbands = max(self.ctx.gwbands, self.ctx.bands)
             parent_calc = take_calc_from_remote(self.ctx.input_manager.parent_folder)
@@ -1326,23 +1297,15 @@ class YamboConvergence(ProtocolMixin, WorkChain):
 
         try:
             pre_manager.nscf.set_kmesh(*self.ctx.input_manager.nscf.get_mesh(), store=True)
-        except Exception:
-            pass
+        except AttributeError: # no k-points mesh in the NSCF (yet)
+            self.report('The NSCF inputs have no k-points mesh, the pre-calculation will use the original one.')
 
         # Use the max bands already computed in prepare_grid (which knows the shifted
         # window's ceiling). Fallback to scanning the space for old checkpoints.
         try:
             band_max = getattr(self.ctx, 'max_bands_needed', 0)
             if not band_max:
-                sources = list(self.ctx.input_manager.parameters_space) + [self.ctx.current_convergence.parameters]
-                for p in sources:
-                    for idx, var in enumerate(p.var):
-                        if 'bnd' in var.lower() or 'gbnd' in var.lower():
-                            try:
-                                vmax = p.max[idx] if isinstance(p.max, list) else p.max
-                                band_max = max(band_max, int(vmax))
-                            except Exception:
-                                pass
+                band_max = _max_bands(list(self.ctx.input_manager.parameters_space) + [self.ctx.current_convergence.parameters])
             # Respect `bands_nscf_update`: 0 means no cap, int caps, 'all-at-once' -> band_max
             required_nbnd = self._capped_nscf_bands(band_max)
             if required_nbnd and pre_manager.nscf.get_nbnd() < required_nbnd:
