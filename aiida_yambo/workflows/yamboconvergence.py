@@ -22,7 +22,7 @@ from aiida_yambo.workflows.utils.convergence import ConvergenceEvaluator
 from aiida_yambo.workflows.utils.helpers_aiida_yambo import take_quantities, updater
 from aiida_yambo.workflows.utils.helpers_workflow import build_parallelism_instructions
 from aiida_yambo.workflows.utils.helpers_yambowf import quantumespresso_input_validator
-from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, KpointMeshConvParam
+from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, KpointMeshConvParam, ScanParam, load_parameter_space
 from aiida_yambo.workflows.yambowf import YamboWorkflow
 
 # Columns shared by every convergence record (mirrors update_story_global + pk-based).
@@ -56,6 +56,15 @@ def _to_jsonable(obj):
     if isinstance(obj, np.ndarray):
         return _to_jsonable(obj.tolist())
     return obj
+
+def _build_params_space(parameters):
+    """The values to be computed in an iteration: the explicit points of a scan, the steps of a 1D
+    parameter, the corners of the box of a coupled (2D) parameter."""
+    if isinstance(parameters, ScanParam):
+        return parameters.build_points()
+    if isinstance(parameters, ConvParam):
+        return parameters.build_stepped_space()
+    return parameters.build_diagonal_corners()
 
 def _max_bands(parameters_list):
     """The largest number of bands the convergence parameters (`ConvParam` or `CoupledConvParam`) can reach."""
@@ -134,6 +143,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             "parameters_space", 
             valid_type=orm.List, 
             required=True,
+            validator=cls._validate_parameters_space,
             help = 'variables to converge, range, steps, and max iterations'
         )
         spec.input(
@@ -196,6 +206,17 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                              message='The workchain failed because the space is too small.')                           
         spec.exit_code(400, 'CONVERGENCE_NOT_REACHED',
                              message='The workchain failed to reach convergence.')
+
+    @staticmethod
+    def _validate_parameters_space(value, _):
+        """The parameters must be valid, and a scan (an explicit list of sets) cannot be mixed with convergences."""
+        try:
+            space = load_parameter_space(value.get_list())
+        except Exception as exc: # pydantic validation errors and wrong shapes
+            return f'invalid parameters space: {exc}'
+        if any(isinstance(parameters, ScanParam) for parameters in space) and len(space) > 1:
+            return 'a ScanParam must be the only entry of the parameters space.'
+        return None
 
     @classmethod
     def get_protocol_filepath(cls):
@@ -693,10 +714,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             evaluator.new_grid = False
 
         # Build grid
-        if isinstance(evaluator.parameters, ConvParam):
-            self.ctx.params_space = evaluator.parameters.build_stepped_space()
-        else:
-            self.ctx.params_space = evaluator.parameters.build_diagonal_corners()
+        self.ctx.params_space = _build_params_space(evaluator.parameters)
 
         if self.ctx.params_space == ['space_exceeds_max']:
             self.report(
@@ -731,10 +749,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         # single-point handling). Reuse it here; do not rebuild.
         if not hasattr(self.ctx, 'params_space') or not self.ctx.params_space:
             # Fallback for direct calls / old checkpoints
-            if isinstance(evaluator.parameters, ConvParam):
-                self.ctx.params_space = evaluator.parameters.build_stepped_space()
-            else:
-                self.ctx.params_space = evaluator.parameters.build_diagonal_corners()
+            self.ctx.params_space = _build_params_space(evaluator.parameters)
             if evaluator.check_single_point:
                 self.ctx.params_space = [evaluator.inquired_point]
                 evaluator.concurrent_steps_count = evaluator.parameters.steps - 1
@@ -915,6 +930,10 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         updated_cols = evaluator.what_list + ['failed', 'useful']
         self.ctx.df.loc[df_batch.index, updated_cols] = df_batch[updated_cols].values
         self.ctx.current_batch_pks = []
+
+        # A scan has nothing to evaluate: all the points were computed, we collect the results.
+        if isinstance(evaluator.parameters, ScanParam):
+            return self._finish_scan(evaluator, df_batch)
 
         # 3. Let the Evaluator object process the current batch directly from the dataframe
         # For single-point verification, do a direct gap comparison (no refit on 1-2 points)
@@ -1152,6 +1171,29 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             collection['story'] = df_records
         self.out('collection', store_Dict(_to_jsonable(collection)))
 
+    def _finish_scan(self, evaluator, df_batch):
+        """The scan is complete: the failed calculations are recorded (not errors), unless all of them failed."""
+        failed = df_batch[df_batch['failed'].astype(bool)]
+        succeeded = df_batch[~df_batch['failed'].astype(bool)]
+        self.report(f'Scan finished: {len(succeeded)} calculations succeeded, {len(failed)} failed.')
+
+        evaluator.success = True
+        evaluator.concurrent_steps_count = 0
+        self.ctx.hint = {}
+        if not succeeded.empty:
+            last = succeeded.sort_values('global_step').iloc[-1]
+            evaluator.last_succeeded_pk = int(last['pk'])
+            evaluator.last_succeeded_uuid = str(last['uuid'])
+        self.ctx.convergence_summary['scan'] = {
+            'variables': list(evaluator.parameters.var),
+            'points': int(len(df_batch)),
+            'failed': int(len(failed)),
+            'failed_pks': [int(pk) for pk in failed['pk']],
+        }
+        if succeeded.empty:
+            self.report('All the calculations of the scan failed.')
+            self.ctx.none_encountered = True
+
     def report_wf(self):
         """Finalize outputs and set workflow exit status after convergence ends."""
 
@@ -1215,10 +1257,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         current_parameters = self.ctx.current_convergence.parameters
         if not hasattr(self.ctx, 'params_space'):
             # build the value grid (not the parameter definition itself)
-            if isinstance(current_parameters, ConvParam):
-                self.ctx.params_space = current_parameters.build_stepped_space()
-            else:
-                self.ctx.params_space = current_parameters.build_diagonal_corners()
+            self.ctx.params_space = _build_params_space(current_parameters)
 
         #self.report(f'Current convergence variables: {current_parameters.var}')
 

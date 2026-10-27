@@ -2,7 +2,7 @@ from typing import Union, List, Optional, Any, Dict
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
-from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam
+from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, ScanParam
 from aiida_yambo.workflows.utils.predictor_1D import The_Predictor_1D
 from aiida_yambo.workflows.utils.predictor_2D import The_Predictor_2D
 
@@ -170,7 +170,7 @@ class ConvergenceEvaluator(BaseModel):
     Tracks runtime execution metadata, histories, and strategy shifts
     for an ongoing convergence workflow loop.
     """
-    parameters: Union[ConvParam, CoupledConvParam]
+    parameters: Union[ConvParam, CoupledConvParam, ScanParam]
     what: Union[str, List[str]]
 
     success: bool = False
