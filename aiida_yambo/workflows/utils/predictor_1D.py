@@ -6,6 +6,7 @@ from scipy.optimize import curve_fit
 
 from aiida.orm import load_node
 from aiida_yambo.utils.common_helpers import find_pw_parent
+from aiida_yambo.workflows.utils.fit_models import DEFAULT_FIT_FUNCTION, PowerLaw1D, get_fit_models
 
 LOGGER = logging.getLogger(__name__)
 
@@ -119,6 +120,10 @@ class The_Predictor_1D():
         
         if not hasattr(self,'Fermi'): self.Fermi=0
 
+        # the function to be fitted: see fit_models.py (parameters of older workflows have no fit_function)
+        if not hasattr(self,'fit_function'): self.fit_function = DEFAULT_FIT_FUNCTION
+        if not hasattr(self,'fit_options'): self.fit_options = {}
+
         self.var_ = list(self.var)
         self.delta_ = list(self.delta)
         self.index = [0]
@@ -222,10 +227,10 @@ class The_Predictor_1D():
             
 ################################################################
 
-    def fit_space_1D(self,fit=False,alpha=1,beta=1,reference = None,verbose=True,plot=False,dim=100,b=None,g=None,save=False,thr_fx=5e-5):
+    def fit_space_1D(self,fit=False,alpha=1,beta=1,reference = None,verbose=True,plot=False,dim=100,b=None,g=None,save=False,thr_fx=5e-5,model=None):
+        """Fit the model (default: the power law with exponent `alpha`) to the results and look for the plateau."""
         
-        f = lambda x,a,b: (a/x**alpha + b)
-        fx = lambda x,a: -alpha*a/(x**(alpha+1))
+        model = model if model is not None else PowerLaw1D(alpha)
          
         xdata,ydata = self.parameters,self.r
         #print('fitting all simulations.')
@@ -233,12 +238,13 @@ class The_Predictor_1D():
             LOGGER.warning(f"Not enough data points ({len(ydata)}) for 1D fit (need >=2), skipping fit")
             return False
 
-        popt,pcov = curve_fit(f,xdata=xdata,
-                      ydata=ydata,sigma=1/xdata**(3-alpha), #so we give more importance to high if the fit is slow...c
-                      bounds=([-np.inf,-np.inf],[np.inf,np.inf]))
+        # the weights of the fit give more importance to the high values if the fit is slow
+        popt,pcov = curve_fit(model,xdata=xdata,
+                      ydata=ydata,sigma=model.sigma(xdata),p0=model.p0(xdata,ydata),
+                      bounds=model.bounds())
         
-        MAE_int = np.average((abs(f(xdata,popt[0],popt[1])-ydata)),weights=xdata)
-        LOGGER.debug('MAE fit = {} eV; power law = {}'.format(MAE_int,alpha))
+        MAE_int = np.average((abs(model(xdata,*popt)-ydata)),weights=xdata)
+        LOGGER.debug('MAE fit = {} eV; model = {}'.format(MAE_int,model))
         self.MAE_fit = MAE_int
         
         if verbose: 
@@ -279,16 +285,16 @@ class The_Predictor_1D():
 
             self.X_fit = l[0][:l_min]*l[1][:l_min]*l[2][:l_min]
         
-        self.Zx_fit = fx(self.X_fit,popt[0])
+        self.Zx_fit = model.derivative(self.X_fit,*popt)
         
-        self.extra = popt[1]
+        self.extra = model.asymptote(popt) # None if the model has no value at infinity
 
         ###########Estimation of the plateaux corner###############
         
-        if reference == 'extra':
+        if reference == 'extra' and self.extra is not None:
             reference = self.extra
         else:
-            self.Z_fit = f(self.X_fit,popt[0],popt[1])  
+            self.Z_fit = model(self.X_fit,*popt)  
             reference = self.Z_fit[-1]
             
         if self.conv_thr_units=='%':
@@ -305,19 +311,20 @@ class The_Predictor_1D():
             
         #print('b: {}\ng: {}'.format(b,g))
         
-        p = f(max(xdata),popt[0],popt[1])
-        p_H = f(b,popt[0],popt[1])
+        p = model(max(xdata),*popt)
+        p_H = model(b,*popt)
         try:
             l = ydata[np.where(xdata == max(xdata))][0]
         except (IndexError, TypeError):
             l = ydata[-1]
         
-        LOGGER.debug('extra={} eV, \nlast calculation={} eV \nlast calculation from fit={} eV'.format(round(popt[1],3),
+        extra = self.extra if self.extra is not None else p_H
+        LOGGER.debug('extra={} eV, \nlast calculation={} eV \nlast calculation from fit={} eV'.format(round(extra,3),
                                                                                           round(l,2),round(p,3)))
         
         if verbose: LOGGER.debug('{} highest point from fit = {} eV\n'.format(b,round(p_H,3)))
-        if verbose: LOGGER.debug('\nrelative err extra - last calculation = {}%'.format(round(100*abs((popt[1]-l)/(l)),3)))      
-        if verbose: LOGGER.debug('relative err extra - highest point from fit = {}%'.format(round(100*abs((popt[1]-p_H)/(p_H)),3)))
+        if verbose: LOGGER.debug('\nrelative err extra - last calculation = {}%'.format(round(100*abs((extra-l)/(l)),3)))      
+        if verbose: LOGGER.debug('relative err extra - highest point from fit = {}%'.format(round(100*abs((extra-p_H)/(p_H)),3)))
         
         if self.var_[0] == 'kpoint_mesh':
             self.kx_fit = self.kx_fit[self.X_fit <= max(max(xdata),self.X_fit[self.condition_conv_calc][0]*1.5)]
@@ -329,9 +336,9 @@ class The_Predictor_1D():
         
     
         
-        self.Z_fit = f(self.X_fit,popt[0],popt[1])
+        self.Z_fit = model(self.X_fit,*popt)
         
-        self.Zx_fit = fx(self.X_fit,popt[0])
+        self.Zx_fit = model.derivative(self.X_fit,*popt)
             
         return True
     
@@ -344,7 +351,7 @@ class The_Predictor_1D():
         overconverged_values = [] if overconverged_values is None else overconverged_values
         LOGGER.debug('last point:{} eV'.format(self.Z_fit[-1]))
         
-        if reference == 'extra':
+        if reference == 'extra' and self.extra is not None:
             reference = self.extra
         else:
             reference = self.Z_fit[-1]
@@ -479,24 +486,22 @@ class The_Predictor_1D():
         old_hints = {} if old_hints is None else old_hints
         self.check_passed = True
         error = 10
-        power_laws = [1,2,3]
-        
-        if 'kpoint_mesh' in self.var_: power_laws = [1,2]
+        models = get_fit_models(self.fit_function, 1, self.fit_options, self.var_[0])
 
-        ii = 1
-        for i in power_laws:
-                self.check_passed = self.fit_space_1D(fit=True,alpha=i,beta=1,plot=False,dim=10,thr_fx=thr_fx)
+        best = models[0]
+        for model in models:
+                self.check_passed = self.fit_space_1D(fit=True,model=model,plot=False,dim=10,thr_fx=thr_fx)
                 if self.MAE_fit<error: 
-                    ii = i
+                    best = model
                     error = self.MAE_fit
                 #THERE SHoULD BE SoME ERRoR FLAG.
                 
                 
                 
 
-        LOGGER.debug('Best power law: {}'.format(ii))  
+        LOGGER.debug('Best model: {}'.format(best))  
         
-        self.check_passed = self.fit_space_1D(fit=True,alpha=ii,beta=1,verbose=True,plot=plot,save=save_fit,thr_fx=thr_fx)
+        self.check_passed = self.fit_space_1D(fit=True,model=best,verbose=True,plot=plot,save=save_fit,thr_fx=thr_fx)
         
         if not self.check_passed:
             self.point_reached = False
@@ -513,7 +518,7 @@ class The_Predictor_1D():
             
         self.point_reached = False
         
-        if reference == 'extra':
+        if reference == 'extra' and self.extra is not None:
             reference = self.extra
         else:
             reference = self.Z_fit[-1]
@@ -530,7 +535,7 @@ class The_Predictor_1D():
                     
                 converged_value = self.check_the_point(old_hints)
 
-                if reference == 'extra':
+                if reference == 'extra' and self.extra is not None:
                     reference = self.extra
                 else:
                     reference = self.Z_fit[-1]
