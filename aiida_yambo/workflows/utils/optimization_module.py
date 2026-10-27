@@ -1,11 +1,11 @@
-from __future__ import absolute_import
+import logging
 import numpy as np
 from scipy import optimize
-from matplotlib import pyplot as plt, style
-import pandas as pd
-import copy
-from ase import Atoms
-from aiida_yambo.utils.common_helpers import *
+from aiida.orm import load_node
+from aiida_yambo.utils.common_helpers import find_pw_parent
+from scipy.optimize import curve_fit
+
+LOGGER = logging.getLogger(__name__)
 
 class Convergence_evaluator():
     """Evaluate convergence data using simple fit and ratio-based checks.
@@ -216,8 +216,8 @@ class Convergence_evaluator():
                 if perr_n < perr:
                     candidates = i
                     perr = perr_n
-            except:
-                pass
+            except (RuntimeError, ValueError, TypeError) as exc: # the fit failed: not a candidate
+                LOGGER.debug('fit failed: %s', exc)
         
         if self.functional_form == 'power_law':
             f = lambda x,a,b: a/x**candidates + b
@@ -322,8 +322,8 @@ class Convergence_evaluator():
                     if perr_n < perr:
                         candidates = [eb,eg]
                         perr = perr_n
-                except:
-                    pass
+                except (RuntimeError, ValueError, TypeError) as exc: # the fit failed: not a candidate
+                    LOGGER.debug('fit failed: %s', exc)
 
 
         #create functions    
@@ -462,7 +462,7 @@ class Convergence_evaluator():
 
                 try:
                     hint['path_d'] = converged_d
-                except:
+                except NameError: # no diagonal convergence performed
                     pass
                 #hint['hint_b'] = hint_b
 
