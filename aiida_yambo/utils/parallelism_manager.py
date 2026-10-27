@@ -34,7 +34,7 @@ schema (a dict keyed by profile name with yambo variable names such as
 ``BndsRnXp``/``NGsBlkXp``/``GbndRnge``) is still accepted and translated
 automatically.
 """
-from __future__ import absolute_import
+import logging
 
 import copy
 
@@ -42,6 +42,8 @@ from aiida_yambo.utils.parallelism_finder import find_parallelism_qp
 from aiida_yambo.utils.defaults.create_defaults import periodical
 from aiida_yambo.utils.common_helpers import find_gw_info
 from aiida_yambo.utils.high_level_API.general_model import OptionsModel, ResourcesModel
+
+LOGGER = logging.getLogger(__name__)
 
 #: yambo runlevel arguments which identify a QP-type run (for 'semi-automatic').
 _QP_RUNLEVELS = {'gw0', 'gw', 'HF_and_locXC', 'hfx', 'hf', 'sc'}
@@ -184,18 +186,18 @@ class YamboInputManagerTarget:
         try:
             mesh = self.manager.nscf.get_mesh()[0]
             kpoints = int(mesh[0] * mesh[1] * mesh[2])
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('could not read the k-points mesh, assuming 1 k-point: %s', exc)
         occupied, ecut = 1, 0
         try:
             occupied, ecut = periodical(self.manager.scf.structure.get_ase())
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('could not get the number of electrons from the structure: %s', exc)
         bands_solver, qp, last_qp, runlevels = bands, 0, 0, []
         try:
             bands_solver, qp, last_qp, runlevels = find_gw_info(yambo_manager)
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('could not analyse the yambo inputs (QP, runlevels): %s', exc)
         return {
             'bands': bands,
             'gcut': gcut,
@@ -258,18 +260,18 @@ class RawInputsTarget:
         try:
             mesh = self.inputs.kpoints.get_kpoints_mesh()[0]
             kpoints = int(mesh[0] * mesh[1] * mesh[2])
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('could not read the k-points mesh, assuming 1 k-point: %s', exc)
         occupied, ecut = 1, 0
         try:
             occupied, ecut = periodical(self.inputs.structure.get_ase())
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('could not get the number of electrons from the structure: %s', exc)
         bands_solver, qp, last_qp, runlevels = bands, 0, 0, []
         try:
             bands_solver, qp, last_qp, runlevels = find_gw_info(self.inputs)
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('could not analyse the yambo inputs (QP, runlevels): %s', exc)
         return {
             'bands': bands,
             'gcut': gcut,
@@ -299,8 +301,8 @@ class RawInputsTarget:
                 options = {}
             options['resources'] = dict(bundle.resources)
             self.inputs.metadata.options = options
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('could not update the resources: %s', exc)
         return True
 
 
