@@ -1,7 +1,10 @@
+import logging
 ###### methods for easy interaction with AiiDA and yambopy data structures
 
 from pydantic import BaseModel, ConfigDict
 from typing import Literal, Union
+
+LOGGER = logging.getLogger(__name__)
 
 class ResourcesModel(BaseModel):
     
@@ -103,7 +106,7 @@ class GeneralInputManager(BaseModel):
             if v is None: # skipping excluded inputs in the exposed ones, if any
                 continue
             if verbose:
-                print(f"getting {k}, value {v}")
+                LOGGER.debug(f"getting {k}, value {v}")
             if isinstance(v, orm.InstalledCode):
                 results[k] = v.full_label
             elif isinstance(v, orm.Dict):
@@ -189,9 +192,11 @@ class GeneralInputManager(BaseModel):
         processed_inputs,
         class_instance_ports,
         last_key: str='',
-        metadata_keys: list[str]= ['pw','yambo'],
-        keys_to_extract: list[str] = ['scf','nscf','qp','bse'],
+        metadata_keys: list[str]= None,
+        keys_to_extract: list[str] = None,
     ):
+        metadata_keys = ['pw','yambo'] if metadata_keys is None else metadata_keys
+        keys_to_extract = ['scf','nscf','qp','bse'] if keys_to_extract is None else keys_to_extract
         results = {}
         for k,v in class_instance_ports.items():
             skip_ports = False
