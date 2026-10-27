@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
 
+import copy
 import math
 
 import numpy as np
@@ -71,6 +72,16 @@ def _to_jsonable(obj):
     if isinstance(obj, np.ndarray):
         return _to_jsonable(obj.tolist())
     return obj
+
+def _get_convergence_thresholds(meta_parameters):
+    """Convergence thresholds (in %) of the protocol.
+
+    The old (misspelled) `convergence_thesholds` key can only come from the overrides of the user: it is honoured.
+    """
+    thresholds = dict(meta_parameters.get('convergence_thresholds') or {})
+    for key, value in (meta_parameters.get('convergence_thesholds') or {}).items():
+        thresholds['FFTGvecs' if key == 'FFTgvecs' else key] = value
+    return {name: thresholds[name] for name in ('FFTGvecs', 'kpoints', 'Nb_Gcut')}
 
 def _parameter_names(parameters):
     """All the variable names handled by a convergence parameter, mirrors included."""
@@ -212,7 +223,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         calc_type:Literal['qp', 'bse', 'bse@qp']='qp',
         workflow_settings:dict=None,
         convergence_parameters:list=None,
-        overrides:dict={},
+        overrides:dict=None,
         NLCC:bool=False,
         RIM_v:bool=False,
         RIM_W:bool=False,
@@ -233,6 +244,9 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         `convergence_parameters` selects which of them to converge, and in which order, e.g.
         ['FFTGvecs', ['BndsRnXp','GbndRnge','NGsBlkXp']]: coupled parameters go in a nested list.
         """
+
+        # we never modify the dictionary of the caller
+        overrides = copy.deepcopy(overrides) if overrides else {}
 
         # Setting the inputs: merging protocols and overrides
         inputs = cls.get_protocol_inputs(protocol, overrides=overrides)
@@ -271,14 +285,18 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         builder.ywfl = ywfl_builder._inputs(prune=True)
         nested_inputs = YamboInputManager.get_nested_inputs(builder,what='YamboConvergence', mode='builder')
         input_manager = YamboInputManager(**nested_inputs)
+
+        if structure is None:
+            structure = input_manager.scf.structure # e.g. when starting from a parent folder
+        if structure is None:
+            raise ValueError('the `structure` is required to build the convergence parameters space.')
                 
-        if workflow_settings:
-            input_manager.workflow_settings = workflow_settings
-        else:
-            input_manager.workflow_settings = inputs.get('workflow_settings', None)
-        
-        if calc_type=='bse':
-            input_manager.workflow_settings['what'] = ['lowest_exciton','brightest_exciton']
+        # the settings given by the user update the ones of the protocol, which are the defaults.
+        settings = dict(inputs.get('workflow_settings') or {})
+        settings.update(workflow_settings or {})
+        if calc_type=='bse' and 'what' not in (workflow_settings or {}):
+            settings['what'] = ['lowest_exciton','brightest_exciton']
+        input_manager.workflow_settings = settings
 
         ################ if K-points density ################
         # kpoint_density semantics = AiiDA distance (1/Å) passed straight to
@@ -300,6 +318,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         volume = structure.get_ase().get_volume()
         
         ################ FFTGVecs ################
+        thresholds = _get_convergence_thresholds(meta_parameters)
         FFT_start=int(meta_parameters['FFTGvecs']['start_ratio']*ecutwfc)
         FFT_stop=int(meta_parameters['FFTGvecs']['stop_ratio']*ecutwfc)
         FFT_max=int(meta_parameters['FFTGvecs']['max_ratio']*ecutwfc)
@@ -311,10 +330,11 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         
         volume_factor = np.log10(volume) # TODO: put the correct factor and describe it!!!
         print('WARNING: still to fix the factor!!!!')
-        b_start=meta_parameters['bands']['start']*volume_factor
-        b_stop=meta_parameters['bands']['stop']*volume_factor
-        b_delta=meta_parameters['bands']['delta']*volume_factor
-        b_max=meta_parameters['bands']['max']*volume_factor
+        bands = meta_parameters['bands'] if 'bands' in meta_parameters else meta_parameters['Nb'] # `Nb` is the old name
+        b_start=bands['start']*volume_factor
+        b_stop=bands['stop']*volume_factor
+        b_delta=bands['delta']*volume_factor
+        b_max=bands['max']*volume_factor
         
         ################ G_cut for X, Sc, BSE kernel ################
         G_start=meta_parameters['G_vectors']['start']
@@ -325,14 +345,14 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         ######################### PARAMETERS SPACE CREATION #########################
         all_parameters = [
             ConvParam('FFTGvecs',                start=FFT_start,stop=FFT_stop,delta=FFT_delta,max=FFT_max,
-                steps=4,max_iterations=4,conv_thr=meta_parameters['convergence_thesholds']['FFTgvecs'],
+                steps=4,max_iterations=4,conv_thr=thresholds['FFTGvecs'],
                 conv_thr_units='%',convergence_algorithm='new_algorithm_1D', units='Ry'),
             KpointMeshConvParam(var='kpoint_density', start=k_start, stop=k_stop, delta=k_delta, max=k_max,
-                steps=k_steps,max_iterations=4,conv_thr=meta_parameters['convergence_thesholds']['kpoints'],
+                steps=k_steps,max_iterations=4,conv_thr=thresholds['kpoints'],
                 conv_thr_units='%',convergence_algorithm='new_algorithm_1D', units='1/A'),
             CoupledConvParam(var=['BndsRnXp','NGsBlkXp'], start=[b_start,G_start],
                 stop=[b_stop,G_stop],delta=[b_delta,G_delta],max=[b_max,G_max],
-                steps=6,max_iterations=8,conv_thr=meta_parameters['convergence_thesholds']['Nb_Gcut'],
+                steps=6,max_iterations=8,conv_thr=thresholds['Nb_Gcut'],
                 conv_thr_units='%',convergence_algorithm='new_algorithm_2D', units=['', 'Ry'],
                 mirror_values={'BndsRnXp':['GbndRnge']},),
         ]

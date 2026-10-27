@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
 #from curses import meta
+import copy
 import subprocess
 
 from aiida import orm
@@ -462,7 +463,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         protocol='moderate',
         calc_type:Literal['qp', 'bse', 'bse@qp']='qp',
         structure=None,
-        overrides={},
+        overrides=None,
         parent_folder=None,
         NLCC=False,
         RIM_v=False,
@@ -477,10 +478,16 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
         :return: a process builder instance with all inputs defined ready for launch.
         """
-        if isinstance(code, str):
-            
+        # the codes can be given also by label or pk
+        if isinstance(pw_code, (str, int)):
+            pw_code = orm.load_code(pw_code)
+        if isinstance(preprocessing_code, (str, int)):
             preprocessing_code = orm.load_code(preprocessing_code)
+        if isinstance(code, (str, int)):
             code = orm.load_code(code)
+
+        # we never modify the dictionary of the caller
+        overrides = copy.deepcopy(overrides) if overrides else {}
 
         if electronic_type not in [ElectronicType.METAL, ElectronicType.INSULATOR]:
             raise NotImplementedError(f'electronic type `{electronic_type}` is not supported.')
@@ -603,7 +610,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         
         # setting Gamma only if molecule:
         molecule = False
-        if protocol == 'molecule' or structure.pbc.count(True)==0: molecule=True
+        if protocol == 'molecule' or not any(builder.nscf['pw']['structure'].pbc): molecule=True
         if molecule:
             input_manager.set_gamma_only()
             

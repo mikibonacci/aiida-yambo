@@ -1,16 +1,16 @@
 default_inputs:
     meta_parameters:
-        convergence_thesholds:
+        convergence_thresholds: # in percentage, see conv_thr_units
             kpoints: 10
             Nb_Gcut: 10
-            FFTgvecs: 10
+            FFTGvecs: 10
         conv_thr_units: '%'
         FFTGvecs: 
             start_ratio: 0.25
             stop_ratio: 0.7
             delta_ratio: 0.1
             max_ratio: 1
-        Nb: 
+        bands: 
             start: 200
             stop: 800
             delta: 100
@@ -44,8 +44,10 @@ protocols:
     moderate:
         description: 'Moderate protocol for a GW convergence: grid -> enough good for standard materials; thresholds -> moderate (5 percent)'
         meta_parameters:
-            conv_thr_k: 5
-            conv_thr_bG: 5
+            convergence_thresholds:
+                kpoints: 5
+                Nb_Gcut: 5
+                FFTGvecs: 5
             conv_thr_units: 'percentage of relative error'
             bands: {
                 'start': 400,
@@ -67,20 +69,24 @@ protocols:
                 'max': 10.0,
             }
         ywfl:
-            protocol:'moderate'
+            protocol: 'moderate'
     precise:
         description: 'precise protocol for a GW convergence: grid -> same as moderate; thresholds -> precise (1 percent)'
         meta_parameters:
-            conv_thr_k: 1
-            conv_thr_bG: 1
+            convergence_thresholds:
+                kpoints: 1
+                Nb_Gcut: 1
+                FFTGvecs: 1
             conv_thr_units: 'percentage of relative error'
         ywfl:
-            protocol:'moderate'
+            protocol: 'moderate'
     molecule:
         description: 'Moderate protocol for a GW convergence in molecules'
         meta_parameters:
-            conv_thr_k: 10
-            conv_thr_bG: 10
+            convergence_thresholds:
+                kpoints: 10
+                Nb_Gcut: 10
+                FFTGvecs: 10
             conv_thr_units: 'percentage of relative error'
             bands: {
                 'start': 500,
@@ -96,4 +102,4 @@ protocols:
                 'max': 40,
             }
         ywfl:
-            protocol:'moderate'
+            protocol: 'moderate'
