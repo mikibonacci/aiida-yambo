@@ -1,42 +1,42 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import
-#from curses import meta
 import copy
+import logging
+import pathlib
 import subprocess
+import tempfile
 import warnings
+from typing import Literal
 
-from aiida import orm
+import numpy as np
+import xarray
 from ase import units
 
-from aiida.engine import WorkChain, while_, if_
-from aiida.engine import ToContext
-
-from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
+from aiida import orm
+from aiida.engine import ToContext, WorkChain, calcfunction, while_
+from aiida.orm import load_node
+from aiida.plugins import DataFactory
 from aiida_quantumespresso.common.types import ElectronicType, SpinType
+from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin, recursive_merge
+from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 
-from aiida_yambo.utils.common_helpers import *
+from aiida_yambo.utils.common_helpers import (
+    find_pw_parent, find_pw_type, gap_mapping_from_nscf, store_Dict, store_List, take_calc_from_remote,
+)
+from aiida_yambo.utils.high_level_API.general_model import ResourcesModel
+# the new BaseModel manager for the inputs
+from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
+from aiida_yambo.workflows.utils.extend_QPDB import FD_and_scissored_db
+from aiida_yambo.workflows.utils.helpers_yambowf import (
+    QP_analyzer, add_corrections, additional_parsed, check_already_computed,
+)
 from aiida_yambo.workflows.yamborestart import YamboRestart
 
-from aiida_yambo.utils.defaults.create_defaults import *
-
-from aiida_yambo.workflows.utils.helpers_yambowf import *
-from aiida_yambo.workflows.utils.extend_QPDB import *
-
-from aiida.plugins import DataFactory
-
-import pathlib
-import tempfile
-
-from typing import Literal
+LOGGER = logging.getLogger(__name__)
 
 LegacyUpfData = DataFactory('core.upf')
 SingleFileData = DataFactory('core.singlefile')
 
-from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin, recursive_merge
 
-#### IMPORT THE NEW BASEMODEL MANAGER FOR INPUTS ####
-from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
-from aiida_yambo.utils.high_level_API.general_model import ResourcesModel
 
 def clean(node):
     cleaned_calcs = []
@@ -47,8 +47,8 @@ def clean(node):
                     if not called_descendant.is_finished_ok:
                         called_descendant.outputs.remote_folder._clean()  # pylint: disable=protected-access
                         cleaned_calcs.append(called_descendant.pk)
-                except Exception:
-                    pass
+                except Exception as exc: # e.g. the connection to the computer
+                    LOGGER.warning('could not clean the remote folder of calculation %s: %s', called_descendant.pk, exc)
 
     if cleaned_calcs:
         return "cleaned remote folders of calculations: {}".format(', '.join(map(str, cleaned_calcs)))
@@ -68,14 +68,14 @@ def sanity_check_QP(v,c,input_db,output_db,create=True,max_correction_eV=5):
     fit_v = np.polyfit(d.QP_Eo[v_cond[0]],d.QP_E[v_cond[0],0],deg=1) if len(v_cond[0]) >= 2 else None
     fit_c = np.polyfit(d.QP_Eo[c_cond[0]],d.QP_E[c_cond[0],0],deg=1) if len(c_cond[0]) >= 2 else None
     for i in wrong[0]:
-        print(d.QP_Eo[i].data*units.Ha,d.QP_E[i,0].data*units.Ha)
+        LOGGER.info('QP energy of band %s: DFT %s eV, QP %s eV', int(d.QP_table[0,i]), d.QP_Eo[i].data*units.Ha, d.QP_E[i,0].data*units.Ha)
         if d.QP_table[0,i]>v:
             fit = fit_c
         else:
             fit = fit_v
         if fit is None:
-            print('no {} fit available, leaving QP for band {} unchanged'.format(
-                'conduction' if d.QP_table[0,i]>v else 'valence', int(d.QP_table[0,i])))
+            LOGGER.warning('no %s fit available, leaving QP for band %s unchanged',
+                'conduction' if d.QP_table[0,i]>v else 'valence', int(d.QP_table[0,i]))
             continue
         d.QP_E[i,0] = fit[0]*d.QP_Eo[i]+fit[1]
     
@@ -195,7 +195,7 @@ def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1,max_iterations=30):
     bands = pw.outputs.output_band.get_bands()
     
     valence, conduction = valence_conduction_bands(nelectrons, SOC)
-    print('valence: {}'.format(valence))    
+    LOGGER.info('valence: %s', valence)
     
     #tol = 10*(-max(bands[:,valence-1])+(min(bands[:,conduction-1])))/2
     mid_gap_energy = max(bands[:,valence-1])+(min(bands[:,conduction-1])-max(bands[:,valence-1]))/2
@@ -204,9 +204,9 @@ def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1,max_iterations=30):
     for _ in range(max_iterations):
         QP = []
         selected = np.where(abs(bands-mid_gap_energy)<tol)
-        print(tol,QP,selected[1])
+        LOGGER.debug('tol=%s, selected bands: %s', tol, selected[1])
         if len(selected[1])<2:
-            print('#1 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
+            LOGGER.info('#1 redoing analysis incrementing the energy range of 50%%. new tol=%s', tol*1.5)
             tol=tol*1.5
             continue
         
@@ -221,7 +221,7 @@ def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1,max_iterations=30):
                     
         v,c = False,False
         if len(QP)<1:
-            print('#2 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
+            LOGGER.info('#2 redoing analysis incrementing the energy range of 50%%. new tol=%s', tol*1.5)
             tol=tol*1.5
             continue
         
@@ -232,12 +232,12 @@ def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1,max_iterations=30):
             if conduction <= i[-2]: c = True
         
         if not v or not c:
-            print('#3 redoing analysis incrementing the energy range of 50%. new tol={}'.format(tol*1.5))
+            LOGGER.info('#3 redoing analysis incrementing the energy range of 50%%. new tol=%s', tol*1.5)
             tol=tol*1.5
             continue
             
-        print('Found {} QPs'.format(len(QP)))
-        print('Fermi level={} eV'.format(fermi))
+        LOGGER.info('Found %s QPs', len(QP))
+        LOGGER.info('Fermi level=%s eV', fermi)
 
         b_min_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].min()
         b_max_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].max()
@@ -262,7 +262,9 @@ def QP_subset_groups(nnk_i,nnk_f,bb_i,bb_f,qp_per_subset):
             groups.append(L)
     return groups
 
-def QP_list_merger(l=[],qp_per_subset=10,consider_only=[-1],already_computed_QP_db:list=None):
+def QP_list_merger(l=None,qp_per_subset=10,consider_only=None,already_computed_QP_db:list=None):
+    l = l or []
+    consider_only = consider_only or [-1]
     
     subgroup = []
     groups = []
@@ -723,7 +725,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             if hasattr(self.ctx, 'calc') and self.ctx.calc is not None:
                 from aiida_yambo.utils.common_helpers import is_nscf_valid
                 nscf_valid = is_nscf_valid(parent_node=self.ctx.calc, input_manager=self.ctx.input_manager)
-        except Exception:
+        except Exception as exc:
+            self.report(f'Could not check the validity of the NSCF ({type(exc).__name__}: {exc}), checking only its number of bands.')
             nscf_valid = self.ctx.input_manager.has_enough_nbnd
 
         if not self.ctx.input_manager.has_enough_nbnd or not nscf_valid:
@@ -745,8 +748,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     scf_parent = find_pw_parent(self.ctx.calc, calc_type=['scf'])
                     self.ctx.input_manager.set_parent_folder(scf_parent.outputs.remote_folder)
                     self.ctx.calc = scf_parent
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.report(f'Could not find the SCF parent ({type(exc).__name__}: {exc}), we keep the current parent.')
             
         self.ctx.splitted_QP = []
         self.ctx.qp_splitter = 0
@@ -786,7 +789,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             if node.process_type == 'aiida.calculations:quantumespresso.pw':
                 return node if find_pw_type(node) == 'nscf' else None
             return find_pw_parent(node, calc_type=['nscf'])
-        except Exception:
+        except Exception as exc:
+            LOGGER.debug('no NSCF found for node %s: %s', node.pk, exc)
             return None
 
     def check_nscf_metallicity(self):
@@ -857,7 +861,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             # only in the QP case, we update the parameters, i.e. we add QP to be computed:
             if len(self.ctx.input_manager.additional_parsing) > 0 and self.ctx.calc_to_do=='qp':
                 self.report('updating yambo parameters to parse more results')
-                mapping, yambo_parameters = add_corrections(
+                mapping, _ = add_corrections(
                     self.ctx.input_manager.qp.parameters, 
                     self.ctx.calc.outputs.remote_folder,
                     self.ctx.input_manager.additional_parsing,
@@ -1095,7 +1099,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
             if hasattr(self.inputs, 'additional_parsing'):
                 #self.report('parsing additional quantities')
-                mapping, yambo_parameters = add_corrections(
+                mapping, _ = add_corrections(
                     self.ctx.input_manager.qp.parameters, 
                     self.ctx.calc.outputs.remote_folder,
                     self.ctx.input_manager.additional_parsing,
@@ -1117,7 +1121,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 self.report('PARSED: {}'.format(parsed))
                 self.out('output_ywfl_parameters', store_Dict(parsed))
             elif hasattr(self.ctx, 'BSE_map'):
-                mapping, yambo_parameters = add_corrections(
+                mapping, _ = add_corrections(
                     self.ctx.input_manager.qp.parameters, 
                     self.ctx.calc.outputs.remote_folder,
                     [])
