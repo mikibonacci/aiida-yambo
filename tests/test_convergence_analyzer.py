@@ -39,3 +39,20 @@ def test_missing_parameter_rows_are_filtered():
     result = analyzer.analyze_dataframe(frame)
     assert len(analyzer.history) == 1
     assert result['status'] in {'CONTINUE', 'CONVERGED'}
+
+
+def test_evaluator_does_not_keep_the_analysis_data():
+    """The evaluator is stored in the checkpoint of the workchain: it must not carry DataFrames around."""
+    import pandas as pd
+    from aiida_yambo.workflows.utils.convergence import ConvergenceEvaluator
+
+    parameters = ConvParam('FFTGvecs', start=1, stop=3, delta=1, max=5, units='Ry')
+    evaluator = ConvergenceEvaluator(parameters=parameters, what='gap_')
+    df = pd.DataFrame({'pk': [1, 2], 'uuid': ['a', 'b'], 'failed': [False, True], 'FFTGvecs': [1, 2], 'gap_': [1., 1.]})
+
+    decision = evaluator.evaluate_dataframe(df)
+
+    assert decision['status'] == 'FAILED_CALCULATION'
+    assert evaluator.none_encountered is True
+    assert evaluator.last_succeeded_uuid == 'a'
+    assert evaluator.history is None and evaluator.analyzer is None

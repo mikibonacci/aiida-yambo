@@ -181,7 +181,7 @@ class ConvergenceEvaluator(BaseModel):
     hints: Dict[str, Any] = Field(default_factory=dict)
     error_log: Optional[str] = None
 
-    history: Optional[pd.DataFrame] = None
+    history: Optional[pd.DataFrame] = None # not used anymore, kept to load old checkpoints
     none_encountered: bool = False
     last_succeeded_node: Optional[Any] = None
     last_succeeded_pk: Optional[int] = None
@@ -190,7 +190,7 @@ class ConvergenceEvaluator(BaseModel):
     new_grid: bool = False
     check_single_point: bool = False
     inquired_point: Optional[List[Any]] = None
-    analyzer: Optional[ConvergenceAnalyzer] = None
+    analyzer: Optional[ConvergenceAnalyzer] = None # not used anymore, kept to load old checkpoints
     decision: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -243,17 +243,18 @@ class ConvergenceEvaluator(BaseModel):
         result columns, and the ``pk``, ``uuid``, ``failed``, ``useful`` columns
         (see ``take_quantities`` and ``YamboConvergence.perform_next_step``).
         """
-        self.analyzer = ConvergenceAnalyzer(self.parameters, self.what, hints=self.hints)
-        self.decision = self.analyzer.analyze_dataframe(df)
-        self.history = self.analyzer.history
-        self.none_encountered = self.analyzer.none_encountered
-        self.last_succeeded_pk = self.analyzer.last_succeeded_pk
-        self.last_succeeded_uuid = self.analyzer.last_succeeded_uuid
-        self.next_step = self.analyzer.next_step
-        self.new_grid = self.analyzer.new_grid
-        self.check_single_point = self.analyzer.check_single_point
-        self.inquired_point = self.analyzer.inquired_point
-        self.hints = self.analyzer.hints
+        # NOTE: the analyzer and its history (a DataFrame) are not kept in the evaluator, which lives in the
+        # `ctx` of the workchain, so it is written in each checkpoint.
+        analyzer = ConvergenceAnalyzer(self.parameters, self.what, hints=self.hints)
+        self.decision = analyzer.analyze_dataframe(df)
+        self.none_encountered = analyzer.none_encountered
+        self.last_succeeded_pk = analyzer.last_succeeded_pk
+        self.last_succeeded_uuid = analyzer.last_succeeded_uuid
+        self.next_step = analyzer.next_step
+        self.new_grid = analyzer.new_grid
+        self.check_single_point = analyzer.check_single_point
+        self.inquired_point = analyzer.inquired_point
+        self.hints = analyzer.hints
         return self.decision
 
     def get_decision(self) -> Dict[str, Any]:
