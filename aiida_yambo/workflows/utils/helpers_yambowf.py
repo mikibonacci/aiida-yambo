@@ -1,37 +1,32 @@
 # -*- coding: utf-8 -*-
 """Classes for calcs e wfls analysis. hybrid AiiDA and not_AiiDA...hopefully"""
-from __future__ import absolute_import
-import numpy as np
-from matplotlib import pyplot as plt, style
 import copy
-import xarray
-import netCDF4 as nc
-from ase.units import Ha
-
-from yambopy.dbs.qpdb import *
-try:
-    from yambopy.dbs.savedb import *
-except ModuleNotFoundError:
-    from yambopy import YamboElectronsDB as YamboSaveDB
-from qepy.lattice import Path
-from aiida.tools.data.array.kpoints import get_kpoints_path, get_explicit_kpoints_path
-
-try:
-    from aiida.orm import Dict, Str, load_node, KpointsData, Bool, StructureData
-    from aiida.plugins import CalculationFactory, DataFactory
-    from aiida_yambo.utils.common_helpers import *
-    from aiida_yambo.utils.parallelism_finder import *
-except:
-    pass
-
-from aiida_yambo.utils.defaults.create_defaults import *
-
-from aiida import orm, load_profile
-
-load_profile()
-
+import logging
 import pathlib
 import tempfile
+from itertools import permutations
+
+import netCDF4 as nc
+import numpy as np
+import xarray
+from ase.units import Ha
+from matplotlib import pyplot as plt
+from qepy.lattice import Path
+from yambopy.dbs.qpdb import YamboQPDB
+try:
+    from yambopy.dbs.savedb import YamboSaveDB
+except ImportError: # old versions of yambopy
+    from yambopy import YamboElectronsDB as YamboSaveDB
+
+from aiida import orm
+from aiida.engine import calcfunction
+from aiida.orm import Bool, Dict, List, StructureData, load_node
+from aiida.plugins import DataFactory
+from aiida.tools.data.array.kpoints import get_kpoints_path
+
+from aiida_yambo.utils.common_helpers import find_pw_parent, find_table_ind, gap_mapping_from_nscf, take_calc_from_remote
+
+LOGGER = logging.getLogger(__name__)
 
 def check_kpoints_in_qe_grid(qe_grid,point):
         maps = []
@@ -41,7 +36,7 @@ def check_kpoints_in_qe_grid(qe_grid,point):
             for k in permutations(g):
                 test = abs(abs(np.array(k))-abs(np.array(point)))
                 if test.dot(test) < 1e-4:
-                    print(point,ind)
+                    LOGGER.debug('%s %s', point, ind)
                     found = True
                     maps.append([point,ind])
                     break
@@ -83,27 +78,28 @@ def QP_bands(node,QP_merged=None,mapping=None,only_scissor=False, plot=False):
     try:
         k_params = get_kpoints_path(pw.inputs.structure)['parameters'].get_dict()
         bulk = True
-    except:
+    except Exception: # e.g. not a 3D system
         bulk = False
         fake_bulk = StructureData(ase=pw.inputs.structure.get_ase())
         fake_bulk.set_pbc([True,True,True])
         k_params = get_kpoints_path(fake_bulk)['parameters'].get_dict()
         
+    pbc = pw.inputs.structure.pbc
     p = []
     exit = False
     for line in k_params['path']:
         if exit: break
         for point in line:
             if point == 'GAMMA' or point == 'G':
-                print(point)
-                print(p)
-                print(len(p),bulk)
+                LOGGER.debug(point)
+                LOGGER.debug(p)
+                LOGGER.debug('%s %s', len(p), bulk)
                 if len(p) > 0 and bulk:
                     if r'$\Gamma$' == p[-1][-1]:
-                        print('continue')
+                        LOGGER.debug('continue')
                         continue
                 elif len(p) > 1 and not bulk:
-                    print('uscire')
+                    LOGGER.debug('uscire')
                     exit = True
                     p.append([k_params['point_coords'][point], r'$\Gamma$'])
                     break
@@ -111,7 +107,7 @@ def QP_bands(node,QP_merged=None,mapping=None,only_scissor=False, plot=False):
                     p.append([k_params['point_coords'][point], r'$\Gamma$'])
 
             else:
-                print(point)
+                LOGGER.debug(point)
                 if point == p[-1][-1]:
                     continue
                 p.append([k_params['point_coords'][point],point])                
@@ -161,7 +157,7 @@ def QP_bands_interface(node, mapping, only_scissor=Bool(False)):
     dft_bands_data.labels = lab
 
     #bands_data.show_mpl() # to visualize the bands
-    print([scissor[0],scissor[1],scissor[2]])
+    LOGGER.info([scissor[0],scissor[1],scissor[2]])
     return {'band_structure_DFT':dft_bands_data, 
             'band_structure_GW':gw_bands_data, 
             'scissor':List([scissor[0],scissor[1],scissor[2]])}
@@ -212,13 +208,13 @@ def quantumespresso_input_validator(workchain_inputs, calc_type='qp'):
         try:
             scf_params_parent = find_pw_parent(parent_calc, calc_type=['scf']).inputs.parameters
             messages.append('found scf inputs from parent')
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('no SCF inputs in the parent: %s', exc)
         try:
             nscf_params_parent = find_pw_parent(parent_calc, calc_type=['nscf']).inputs.parameters
             messages.append('found nscf inputs from parent')
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.debug('no NSCF inputs in the parent: %s', exc)
 
     redo_nscf = False
 
@@ -253,7 +249,7 @@ def add_corrections(yambo_parameters:dict, parent_folder:orm.RemoteData, additio
     parent_calc = take_calc_from_remote(parent_folder,level=-1)
     try:
         nscf = find_pw_parent(parent_calc, calc_type=['nscf'])
-    except:
+    except Exception: # the parent is already the NSCF
         nscf = parent_calc
     mapping = gap_mapping_from_nscf(nscf.pk, additional_parsing_list)
     val = mapping['valence']
@@ -280,7 +276,7 @@ def add_corrections(yambo_parameters:dict, parent_folder:orm.RemoteData, additio
                     QP.append(i)
         try:
             QP = [QP[0]]
-        except:
+        except IndexError:
             QP = []
     for name in additional_parsing_list:
         #print('adding ',name,mapping[name])
@@ -360,9 +356,9 @@ def additional_parsed(calc, additional_parsing_list, mapping): #post proc
                 homo_gw, homo_dft = parse_qp_level(calc, [homo_k, homo_k, val, val])
                 lumo_gw, lumo_dft = parse_qp_level(calc, [lumo_k, lumo_k, cond, cond])
 
-                print('homo: ', homo_gw)
-                print('lumo: ', lumo_gw)
-                print('gap: ', lumo_gw-homo_gw)
+                LOGGER.info('homo: %s', homo_gw)
+                LOGGER.info('lumo: %s', lumo_gw)
+                LOGGER.info('gap: %s', lumo_gw-homo_gw)
 
                 parsed_dict['gap_'] =  lumo_gw-homo_gw
                 parsed_dict['homo'] =  homo_gw
@@ -392,9 +388,9 @@ def additional_parsed(calc, additional_parsing_list, mapping): #post proc
                 homo_gw, homo_dft = parse_qp_level(calc, mapping[key][0])
                 lumo_gw, lumo_dft = parse_qp_level(calc, mapping[key][1])
 
-                print('homo: ', homo_gw)
-                print('lumo: ', lumo_gw)
-                print('gap: ', lumo_gw-homo_gw)
+                LOGGER.info('homo: %s', homo_gw)
+                LOGGER.info('lumo: %s', lumo_gw)
+                LOGGER.info('gap: %s', lumo_gw-homo_gw)
 
                 parsed_dict[key] =  lumo_gw-homo_gw
                 parsed_dict['homo_'+key[-2]] =  homo_gw
@@ -438,9 +434,8 @@ def additional_parsed(calc, additional_parsing_list, mapping): #post proc
                         parsed_dict[key] =  level_gw
                         parsed_dict[key+'_dft'] =  level_dft
             
-        except:
-            #parsed_dict[key] =  False
-            pass
+        except Exception as exc:
+            LOGGER.warning('could not parse %s: %s', what, exc)
     return parsed_dict
 
 
@@ -468,7 +463,7 @@ def QP_analyzer(pk,QP_db,mapping):
             temp_file = pathlib.Path(dirpath) / filename
             with QP_db.base.repository.open(filename, 'rb') as handle:
                 temp_file.write_bytes(handle.read())
-        except:
+        except FileNotFoundError: # not a merged database
             filename='ndb.QP'
             temp_file = pathlib.Path(dirpath) / filename
             with QP_db.base.repository.open(filename, 'rb') as handle:
@@ -491,7 +486,7 @@ def QP_analyzer(pk,QP_db,mapping):
             missing_region = 'conduction'
 
         if missing_region is not None:
-            print('WARNING: no {} states in the merged QP database, returning a partial BSE map'.format(missing_region))
+            LOGGER.warning('WARNING: no {} states in the merged QP database, returning a partial BSE map'.format(missing_region))
             BSE_mapper = {
                 'nscf_pk': find_pw_parent(ywfl).pk,
                 'v_min': int(db.QP_table[0,:].min().values),
@@ -510,7 +505,7 @@ def QP_analyzer(pk,QP_db,mapping):
         v_min = db.QP_table[0,:].min()
         c_max = db.QP_table[0,:].max()
         
-        print('vmin,cmax , ',v_min.values,c_max.values)
+        LOGGER.debug('%s %s %s', 'vmin,cmax , ', v_min.values, c_max.values)
         
         where_v_max_dft = np.where(db.QP_Eo[:] == db.QP_Eo[where_v[0]].max())[0]
         where_c_min_dft = np.where(db.QP_Eo[:] == db.QP_Eo[where_c[0]].min())[0]
@@ -520,8 +515,8 @@ def QP_analyzer(pk,QP_db,mapping):
         
         dft_gap = db.QP_Eo[where_c_min_dft][0]*Ha-db.QP_Eo[where_v_max_dft][0]*Ha
         gw_gap = db.QP_E[where_c_min,0][0]*Ha-db.QP_E[where_v_max,0][0]*Ha
-        print('DFT gap = {} eV'.format(dft_gap.values))
-        print('GW gap = {} eV'.format(gw_gap.values))
+        LOGGER.info('DFT gap = {} eV'.format(dft_gap.values))
+        LOGGER.info('GW gap = {} eV'.format(gw_gap.values))
         
         k_v_dft = db.QP_table[2,where_v_max_dft]
         k_c_dft = db.QP_table[2,where_c_min_dft]
@@ -550,11 +545,11 @@ def QP_analyzer(pk,QP_db,mapping):
         k_coord_c = k_mesh[int(k_c)-1]
         
         delta_k = abs(abs(k_coord_c)-abs(k_coord_v))
-        print(delta_k)
+        LOGGER.debug(delta_k)
         
         l = check_kpoints_in_qe_grid(k_mesh,delta_k)
         
-        print(l)
+        LOGGER.debug(l)
         plt.plot(db.QP_table[2,where_v[0]],db.QP_E[where_v[0],0]*Ha,'o')
         plt.plot(db.QP_table[2,where_c[0]],db.QP_E[where_c[0],0]*Ha,'o')
 
@@ -608,8 +603,8 @@ def check_already_computed(qp_db_pk:int,b:int,k:int):
 
 
 def additional_dimension_check(src_file, dst_file):
-    src = Dataset(src_file, "r")
-    dst = Dataset(dst_file, "w")
+    src = nc.Dataset(src_file, "r")
+    dst = nc.Dataset(dst_file, "w")
 
     # Create dimensions (except string1)
     for name, dim in src.dimensions.items():
@@ -626,12 +621,12 @@ def additional_dimension_check(src_file, dst_file):
         else:
             # Skip variables with missing dimensions
             try:
-                print(var.dtype, var.dimensions)
+                LOGGER.debug('%s %s', var.dtype, var.dimensions)
                 dims = tuple(d for d in var.dimensions if d != "string1")
                 new_var = dst.createVariable(name, var.dtype, dims)
                 new_var[:] = var[:]
             except ValueError as e:
-                print(f"Skipping variable {name} due to missing dimension: {e}")
+                LOGGER.warning(f"Skipping variable {name} due to missing dimension: {e}")
                 continue
 
     # Copy global attributes
