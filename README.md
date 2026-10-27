@@ -9,14 +9,19 @@ The documentation for this package can be found on Read the Docs at https://aiid
 
 ## Installation instructions:
 
-Requirements: AiiDA (version >=1.6.4,<3), and other python packages specified in the setup.json file.
+Requirements: Python >=3.10 and AiiDA (>=2.4.1,<3); the other python packages are listed in `pyproject.toml`.
 
 Installation via pip
 
 ```
 pip install -e yambo-aiida
-reentry scan
 ```
+
+**Note on `yambopy`**: the plugin needs the `aiida-parsing` branch of `yambopy`, which is installed directly from
+GitHub (`yambopy @ git+https://github.com/mikibonacci/yambopy@aiida-parsing`). For this reason the package cannot be
+uploaded to PyPI until that branch is released as a regular `yambopy` version.
+
+To run the tests: `pip install -e "yambo-aiida[tests]"` and `pytest tests`.
 
 # Tutorials:
 You can find tutorials at the documentation webpage (see above). These 
@@ -26,7 +31,7 @@ version (examples/examples_Silicon folder).
 # License  
 The terms of the yambo-aiida license can be found in the LICENSE.txt file.
 
-[![Build Status](https://travis-ci.org/yambo-code/yambo-aiida.svg?branch=master)](https://travis-ci.org/yambo-code/yambo-aiida)
+[![CI](https://github.com/yambo-code/yambo-aiida/actions/workflows/ci.yml/badge.svg)](https://github.com/yambo-code/yambo-aiida/actions/workflows/ci.yml)
 
 # Acknowledgements
 
