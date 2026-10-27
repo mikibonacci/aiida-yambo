@@ -6,6 +6,7 @@ import os
 from aiida.plugins import DataFactory, CalculationFactory
 from aiida.orm import List, Dict
 from aiida.engine import submit
+from aiida.orm import Int, load_code, load_node
 from aiida_yambo.workflows.yamborestart import YamboRestart
 import argparse
 

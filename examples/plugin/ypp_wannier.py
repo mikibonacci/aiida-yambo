@@ -5,9 +5,9 @@ from __future__ import print_function
 import sys
 import os
 from aiida.plugins import DataFactory, CalculationFactory
-from aiida.orm import List, Dict, Str,UpfData
+from aiida.orm import List, Dict, Str
 from aiida.engine import submit
-from aiida_quantumespresso.utils.pseudopotential import validate_and_prepare_pseudos_inputs
+from aiida.orm import load_code, load_node
 from ase import Atoms
 import argparse
 from aiida_yambo.calculations.ypp import YppCalculation

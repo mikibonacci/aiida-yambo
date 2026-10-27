@@ -5,6 +5,7 @@ import sys
 import os
 from aiida.plugins import DataFactory, CalculationFactory
 from aiida.engine import submit
+from aiida.orm import load_code, load_node
 from aiida_yambo.calculations.yambo import YamboCalculation
 import argparse
 
