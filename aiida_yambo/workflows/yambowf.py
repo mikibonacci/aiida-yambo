@@ -861,7 +861,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             # only in the QP case, we update the parameters, i.e. we add QP to be computed:
             if len(self.ctx.input_manager.additional_parsing) > 0 and self.ctx.calc_to_do=='qp':
                 self.report('updating yambo parameters to parse more results')
-                mapping, _ = add_corrections(
+                mapping, yambo_parameters = add_corrections(
                     self.ctx.input_manager.qp.parameters, 
                     self.ctx.calc.outputs.remote_folder,
                     self.ctx.input_manager.additional_parsing,

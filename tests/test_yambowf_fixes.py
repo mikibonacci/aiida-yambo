@@ -302,3 +302,22 @@ def test_setup_with_an_empty_parent_starts_from_scratch(yambowf, generate_workch
         assert 'calc' not in process.ctx
     finally:
         process.close()
+
+
+def test_qp_step_asks_the_additional_quantities_to_be_computed(yambowf, monkeypatch):
+    """The QPkrange of the yambo parameters is updated, from the NSCF, to parse the requested quantities."""
+    new_parameters = {'arguments': ['gw0'], 'variables': {'QPkrange': [[[1, 1, 4, 5]], '']}}
+    monkeypatch.setattr(yambowf, 'add_corrections', lambda parameters, folder, additional: ({'valence': 4}, new_parameters))
+    submitted = []
+    qp = SimpleNamespace(parameters={'arguments': ['gw0'], 'variables': {}}, metadata=SimpleNamespace(call_link_label=None))
+    manager = SimpleNamespace(additional_parsing=['gap_'], qp=qp, set_parent_folder=lambda node: None,
+                              generate_AiiDA_inputs=lambda what: {'what': what})
+    wf = _workflow(all_calcs_to_do=['qp'], calc_to_do='qp', input_manager=manager,
+                   calc=SimpleNamespace(is_finished_ok=True, outputs=SimpleNamespace(remote_folder='remote')))
+    wf.submit = lambda process_class, **inputs: submitted.append((process_class, inputs)) or 'future'
+
+    yambowf.YamboWorkflow.perform_next(wf)
+
+    assert qp.parameters is new_parameters
+    assert wf.ctx.mapping == {'valence': 4}
+    assert submitted == [(yambowf.YamboRestart, {'what': 'qp'})]
