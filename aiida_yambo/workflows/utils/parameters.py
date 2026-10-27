@@ -6,6 +6,8 @@ from typing import List, Dict, Any, Union, Tuple, Literal
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
+from aiida_yambo.workflows.utils.fit_models import DEFAULT_FIT_FUNCTION, check_fit_function
+
 class ConvParamBase(BaseModel):
     """Base configuration shared across all convergence parameter types."""
     steps: int = 4 # steps to build the space during a given iteration
@@ -13,6 +15,9 @@ class ConvParamBase(BaseModel):
     max_iterations: int = 4 # max attempts in the workflow to converge this params
     conv_thr_units: Literal['eV', '%'] = '%'
     convergence_algorithm: Literal['new_algorithm_1D','new_algorithm_2D', 'dummy'] = 'new_algorithm_1D'
+    # function fitted to the results, by name (see fit_models.py) and its options, e.g. {'alphas': [1, 2]}
+    fit_function: str = DEFAULT_FIT_FUNCTION
+    fit_options: Dict[str, Any] = Field(default_factory=dict)
     
     model_config = ConfigDict(populate_by_name=True)
 
@@ -68,6 +73,11 @@ class ConvParam(ConvParamBase):
         if len(wrapped) != 1 or not wrapped[0]:
             raise ValueError('ConvParam requires exactly one non-empty variable name.')
         return wrapped
+
+    @model_validator(mode='after')
+    def _validate_fit_function(self):
+        check_fit_function(self.fit_function, 1, self.fit_options, self.var[0])
+        return self
 
     @model_validator(mode='after')
     def _validate_bounds(self):
@@ -276,6 +286,11 @@ class CoupledConvParam(ConvParamBase):
     @classmethod
     def _wrap_var(cls, v):
         return v if isinstance(v, list) else [v]
+
+    @model_validator(mode='after')
+    def _validate_fit_function(self) -> 'CoupledConvParam':
+        check_fit_function(self.fit_function, 2, self.fit_options, tuple(self.var))
+        return self
 
     @model_validator(mode='after')
     def validate_strict_2d(self) -> 'CoupledConvParam':

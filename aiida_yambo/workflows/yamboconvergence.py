@@ -97,6 +97,25 @@ def _parameter_names(parameters):
         names.update(mirrors)
     return names
 
+def apply_fit_functions(parameters_list, fit_functions):
+    """Set the fit function of the convergence parameters.
+
+    `fit_functions` maps a variable name of a parameter (e.g. 'FFTGvecs', 'BndsRnXp', 'kpoint_density') to the name of
+    the fit function, or to a dictionary {'fit_function': name, 'fit_options': {...}} (see fit_models.py).
+    The parameters are validated again, so an unknown function fails here.
+    """
+    parameters_list = list(parameters_list)
+    for variable, setting in (fit_functions or {}).items():
+        setting = {'fit_function': setting} if isinstance(setting, str) else dict(setting)
+        for index, parameters in enumerate(parameters_list):
+            if variable in _parameter_names(parameters):
+                parameters_list[index] = type(parameters)(**{**parameters.model_dump(), **setting})
+                break
+        else:
+            raise ValueError(f'No convergence parameter has the variable {variable!r}: '
+                             f'{[sorted(_parameter_names(p)) for p in parameters_list]}')
+    return parameters_list
+
 def select_convergence_parameters(available, requested):
     """Select, in the requested order, the convergence parameters of `available`.
 
@@ -239,6 +258,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         workflow_settings:dict=None,
         convergence_parameters:list=None,
         scan_points:list=None,
+        fit_functions:dict=None,
         overrides:dict=None,
         NLCC:bool=False,
         RIM_v:bool=False,
@@ -259,6 +279,9 @@ class YamboConvergence(ProtocolMixin, WorkChain):
 
         `convergence_parameters` selects which of them to converge, and in which order, e.g.
         ['FFTGvecs', ['BndsRnXp','GbndRnge','NGsBlkXp']]: coupled parameters go in a nested list.
+
+        `fit_functions` sets the function fitted to the results of a parameter, by name (see `fit_models.py`):
+        {'FFTGvecs': 'exponential', 'BndsRnXp': {'fit_function': 'power_law', 'fit_options': {'alphas': [1, 2]}}}.
 
         `scan_points` is an alternative: a list of dictionaries {variable: value}, one for each calculation to be
         run, e.g. [{'FFTGvecs': 10, 'BndsRnXp': 100}, {'FFTGvecs': 15, 'BndsRnXp': 200}]. No convergence is
@@ -392,7 +415,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             #no k-points, so we skip them in the parameters_space.
             parameters_space = [p for p in parameters_space if not isinstance(p, KpointMeshConvParam)]
 
-        input_manager.parameters_space = parameters_space
+        input_manager.parameters_space = apply_fit_functions(parameters_space, fit_functions)
 
         new_builder = input_manager.populate_builder(builder, what='YamboConvergence')
         

@@ -183,3 +183,29 @@ def test_scan_builder_can_be_instantiated_as_a_process(aiida_profile, codes, sil
         assert process.ctx.current_convergence.parameters.build_points() == [[10, 100], [15, 200]]
     finally:
         process.close()
+
+
+def test_fit_functions_of_the_builder_are_set_on_the_parameters(aiida_profile, codes, silicon):
+    from aiida_yambo.workflows.yamboconvergence import YamboConvergence
+    from aiida_yambo.workflows.utils.parameters import load_parameter_space
+
+    builder = YamboConvergence.get_builder_from_protocol(
+        structure=silicon, **codes,
+        fit_functions={'FFTGvecs': 'exponential', 'BndsRnXp': {'fit_function': 'power_law', 'fit_options': {'alphas': [1]}}})
+
+    fft, kpoints, coupled = load_parameter_space(builder.parameters_space.get_list())
+    assert (fft.fit_function, fft.fit_options) == ('exponential', {})
+    assert (coupled.fit_function, coupled.fit_options) == ('power_law', {'alphas': [1]})
+    assert kpoints.fit_function == 'power_law'  # not touched
+
+
+@pytest.mark.parametrize('fit_functions, message', [
+    ({'EXXRLvcs': 'exponential'}, 'No convergence parameter has the variable'),
+    ({'FFTGvecs': 'nope'}, 'Unknown 1D fit function'),
+    ({'BndsRnXp': 'exponential'}, 'Unknown 2D fit function'),  # a coupled parameter needs a 2D function
+])
+def test_invalid_fit_functions_are_refused_by_the_builder(aiida_profile, codes, silicon, fit_functions, message):
+    from aiida_yambo.workflows.yamboconvergence import YamboConvergence
+
+    with pytest.raises(ValueError, match=message):
+        YamboConvergence.get_builder_from_protocol(structure=silicon, fit_functions=fit_functions, **codes)
