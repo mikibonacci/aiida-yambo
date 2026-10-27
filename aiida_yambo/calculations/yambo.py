@@ -2,7 +2,6 @@
 """
 Plugin to create a Yambo input file and run a calculation with the yambo executable.
 """
-from __future__ import absolute_import
 import os
 import six
 
@@ -18,7 +17,7 @@ from aiida.orm import RemoteData, BandsData, ArrayData
 
 from aiida.plugins import DataFactory, CalculationFactory
 
-from aiida_yambo.utils.common_helpers import * 
+from aiida_yambo.utils.common_helpers import take_calc_from_remote
 
 from yambopy.io.inputfile import YamboIn
 
@@ -208,7 +207,7 @@ class YamboCalculation(CalcJob):
         # flags for yambo interfaces
         try:
             precode_param_dict = self.inputs.precode_parameters
-        except:
+        except AttributeError: # not provided
             precode_param_dict = Dict({})
         # check the precode parameters given in input
         input_cmdline = settings.pop('CMDLINE', None)
@@ -260,19 +259,19 @@ class YamboCalculation(CalcJob):
 
         try:
             parent_calc = parent_calc_folder.get_incoming().all_nodes()[-1] #to load the node from a workchain...
-        except:
+        except IndexError:
             parent_calc = parent_calc_folder.get_incoming().get_node_by_label('remote_folder')
 
         if yambo_parent:
             if copy_save:
                 try:
                     remote_copy_list.append((parent_calc_folder.computer.uuid,parent_calc_folder.get_remote_path()+"/SAVE/",'./SAVE/'))
-                except:
+                except (AttributeError, TypeError):
                     remote_copy_list.append((parent_calc_folder.computer.uuid,parent_calc_folder.get_remote_path()+"out/aiida.save/SAVE/",'./SAVE/'))
             else:
                 try:
                     remote_symlink_list.append((parent_calc_folder.computer.uuid,parent_calc_folder.get_remote_path()+"/SAVE/",'./SAVE/'))
-                except:
+                except (AttributeError, TypeError):
                     remote_symlink_list.append((parent_calc_folder.computer.uuid,parent_calc_folder.get_remote_path()+"out/aiida.save/SAVE/",'./SAVE/'))
 
             if copy_dbs:
@@ -368,7 +367,7 @@ class YamboCalculation(CalcJob):
         #calcinfo.codes_info = [c1, c2, c3] if not yambo_parent else [c3]   
         try:
             parent_save_path = parent_calc.outputs.output_parameters.get_dict().pop('ns_db1_path', None)
-        except:
+        except AttributeError: # the parent has no output parameters
             parent_save_path = None
 
         if yambo_parent:
