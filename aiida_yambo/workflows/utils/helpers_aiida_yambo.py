@@ -1,36 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Classes for calcs e wfls analysis."""
-from __future__ import absolute_import
-import numpy as np
-from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt, style
-import pandas as pd
+"""Helpers of the YamboConvergence workflow: update the inputs for the next calculation, take the results."""
 import copy
+import logging
+from typing import Any, Dict, Tuple
 
-try:
-    from aiida.orm import Dict, Str, load_node, KpointsData, RemoteData
-    from aiida.plugins import CalculationFactory, DataFactory
-    from aiida_yambo.utils.common_helpers import *
-except:
-    pass
-from aiida_yambo.utils.parallelism_finder import *
-from aiida_yambo.utils.defaults.create_defaults import *
-from aiida_yambo.utils.high_level_API.general_model import OptionsModel, ResourcesModel
+from aiida.common.exceptions import NotExistent
+from aiida.orm import load_node
+
+from aiida_yambo.utils.common_helpers import find_pw_parent, search_in_group, take_calc_from_remote
 from aiida_yambo.utils.parallelism_manager import ParallelismManager
-#we try to use netcdf
-try:
-    from netCDF4 import Dataset
-except ImportError:
-    _has_netcdf = False
-else:
-    _has_netcdf = True
-################################################################################
-################################################################################
 
-################################## update_parameters - create parameters space #####################################
-import copy
-from typing import Dict, Any, Tuple
-from aiida.orm import Dict as AiiDA_Dict, KpointsData, load_node
+LOGGER = logging.getLogger(__name__)
 
 def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index: int, group, calc_type='qp') -> Tuple[Any, Dict[str, Any], Any, Any]:
     """
@@ -108,7 +88,8 @@ def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index
                         calc_type=['scf']
                     ).outputs.remote_folder 
                     input_manager.set_parent_folder(parent_folder)
-                except Exception:
+                except Exception as exc: # no SCF parent: the new mesh needs the parents to be recomputed
+                    LOGGER.info('no SCF parent for the new k-points mesh (%s), removing the parent folder', exc)
                     input_manager.remove_parent_folder()
 
             yambo_manager.settings = {**yambo_manager.settings, 'COPY_SAVE': False, 'COPY_DBS': False}
@@ -155,19 +136,21 @@ def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index
     if effective_parent and input_manager.parent_folder is None:
         try:
             input_manager.set_parent_folder(load_node(effective_parent).outputs.remote_folder)
-        except Exception:
-            pass
+        except (NotExistent, AttributeError, KeyError) as exc:
+            LOGGER.debug('calculation %s cannot be the parent: %s', effective_parent, exc)
 
     return input_manager, values_dict, already_done, parent_nscf
 
 ################################## parsers #####################################
-def take_quantities(df, what=['gap_eV']):
+def take_quantities(df, what=None):
     """Fetch the `what` results (and the failed/useful flags) from stored workflow nodes.
 
     The dataframe is already filled row by row in perform_next_step with the
     parameters (and pk/uuid). This function only loads the nodes to retrieve
     the converged quantities, keeping the heavy I/O out of the main loop.
     """
+
+    what = what if what is not None else ['gap_eV']
 
     df['failed'] = False
     df['useful'] = True
