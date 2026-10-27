@@ -1,26 +1,19 @@
 # -*- coding: utf-8 -*-
+import logging
+import re
 
-from six.moves import range
-import cmath
-import netCDF4
-import numpy
-import copy
-import glob, os, re
+from yambopy.dbs.excitondb import YamboExcitonDB, YamboLatticeDB
 
-from yambopy.dbs.excitondb import *
-try:
-    from yambopy.dbs.savedb import *
-except ModuleNotFoundError:
-    from yambopy import YamboElectronsDB as YamboSaveDB
+LOGGER = logging.getLogger(__name__)
 
 def take_fermi_parser(file):  # calc_node_pk = node_conv_wfl.outputs.last_calculation
 
     for line in file:
         if '[X]Fermi Level' in line:
-            print('The Fermi level is {}'.format(line.split()[3]))
+            LOGGER.info('The Fermi level is {}'.format(line.split()[3]))
             ef = float(line.split()[3])
         if '[X] Fermi Level' in line:
-            print('The Fermi level is {}'.format(line.split()[4]))
+            LOGGER.info('The Fermi level is {}'.format(line.split()[4]))
             ef = float(line.split()[4])
 
     return ef
@@ -108,11 +101,11 @@ def parse_log(log,output_params,timing):
         try:
             last_time = time.findall(log.lines[-1])[-1]
             output_params['last_time'] = yambotiming_to_seconds(last_time)
-        except:
+        except IndexError:
             try:
                 last_time = time.findall(output_params['timing'][-1])[-1]
                 output_params['last_time'] = yambotiming_to_seconds(last_time)
-            except:
+            except (IndexError, KeyError):
                 last_time = 0
                 output_params['last_time'] = 0
         
@@ -175,35 +168,35 @@ def parse_log(log,output_params,timing):
             if  reading_explosion_of_memory.findall(log.lines[-1]):
                 output_params['memory_error'] = True
                 output_params['errors'].append('memory_general')
-        except:
+        except IndexError: # no lines in the log
             pass
         
         try:
             if  alloc2_error.findall(log.lines[-1]):
                 output_params['memory_error'] = True
                 output_params['errors'].append('memory_general')
-        except:
+        except IndexError: # no lines in the log
             pass
 
         try:
             if  alloc3_error.findall(log.lines[-1]):
                 output_params['memory_error'] = True
                 output_params['errors'].append('memory_general')
-        except:
+        except IndexError: # no lines in the log
             pass
 
         try:
             if  alloc4_error.findall(log.lines[-1]):
                 output_params['memory_error'] = True
                 output_params['errors'].append('memory_general')
-        except:
+        except IndexError: # no lines in the log
             pass
         
         try:
             if  X_par_mem.findall(log.lines[-1]) or X_par_mem_.findall(log.lines[-1]):
                 output_params['memory_error'] = True
                 output_params['errors'].append('X_par_allocation')
-        except:
+        except IndexError: # no lines in the log
             pass
 
         if 'out of memory' in log.lines[-1]:
@@ -216,7 +209,7 @@ def parse_report(report, output_params):
     
     try:
         output_params['Fermi(eV)'] = take_fermi_parser(report.lines)
-    except:
+    except UnboundLocalError: # no Fermi level in the report
         pass
 
     if 'setup' in report.filename:
