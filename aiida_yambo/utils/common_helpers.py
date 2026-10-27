@@ -531,11 +531,73 @@ def gap_mapping_from_nscf(nscf_pk, additional_parsing_List=[]):
 
     return mapping
 
-def check_same_yambo(node, params_to_calc, k_mesh_to_calc,what,up_to_p2y=False,full=True,additional=[], bands=None):
-    l = 0 
+def _is_ignored_variable(name):
+    """Parallelism variables do not change the results."""
+    return 'CPU' in name or 'ROLEs' in name or 'PAR_' in name
+
+def same_yambo_variables(params_to_calc, old_params):
+    """True if two sets of yambo variables (`{name: [value, unit]}`) give the same results.
+
+    Same variables, with the same values and units. We do not consider the parallelism,
+    and the `QPkrange`, which is set at runtime from the `additional_parsing` quantities.
+    """
+    new = {k: v for k, v in params_to_calc.items() if not _is_ignored_variable(k) and k != 'QPkrange'}
+    old = {k: v for k, v in old_params.items() if not _is_ignored_variable(k) and k != 'QPkrange'}
+    return new == old
+
+def _pw_signature(structure, pseudos, parameters):
+    """What defines the DFT calculation: structure, pseudopotentials and parameters (but the number of bands)."""
+    parameters = copy.deepcopy(parameters)
+    parameters.get('SYSTEM', {}).pop('nbnd', None)
+    return {
+        'structure': structure.base.caching.compute_hash() if structure is not None else None,
+        'pseudos': {kind: pseudo.base.caching.compute_hash() for kind, pseudo in (pseudos or {}).items()},
+        'parameters': parameters,
+    }
+
+def pw_signature_from_manager(pw_manager):
+    """Signature of the `scf` or `nscf` PwBaseWorkChainInputManager of a YamboInputManager."""
+    return _pw_signature(getattr(pw_manager, 'structure', None), getattr(pw_manager, 'pseudos', None), pw_manager.parameters)
+
+def pw_signature_from_node(node, namespace=()):
+    """Signature of a PwCalculation (no namespace) or of a workflow with a `pw` namespace (e.g. namespace=('nscf', 'pw'))."""
+    inputs = node.base.links.get_incoming().nested()
+    for name in namespace:
+        inputs = inputs[name]
+    return _pw_signature(inputs['structure'], inputs['pseudos'], inputs['parameters'].get_dict())
+
+def same_pw_setup(pw_manager, node, namespace=()):
+    """True if `node` was run with the structure, pseudopotentials and parameters of `pw_manager`.
+
+    We compare only what the manager knows (e.g. nothing but the parameters if we start from a parent folder).
+    If the inputs of the node cannot be read, they are not the same.
+    """
+    try:
+        expected = pw_signature_from_manager(pw_manager)
+        found = pw_signature_from_node(node, namespace)
+    except Exception:
+        return False
+    for key, known in (('structure', getattr(pw_manager, 'structure', None) is not None),
+                       ('pseudos', bool(getattr(pw_manager, 'pseudos', None))),
+                       ('parameters', bool(pw_manager.parameters))):
+        if not known:
+            expected.pop(key), found.pop(key)
+    return expected == found
+
+def check_same_yambo(node, params_to_calc, k_mesh_to_calc, up_to_p2y=False, additional=None, bands=None, nscf_manager=None):
+    """Return the pk of `node` if it is a successful YamboWorkflow equivalent to the one we want to run, else False.
+
+    :param params_to_calc: the yambo variables of the calculation we want to run.
+    :param nscf_manager: the `nscf` PwBaseWorkChainInputManager of the calculation we want to run: if given,
+        the structure, the pseudopotentials and the parameters of the NSCF of `node` must be the same.
+    :param up_to_p2y: we look for a calculation we can use as parent of the p2y one (the variables do not matter).
+    """
+    additional = additional or []
     already_done = False
     try:
         if node.is_finished_ok:
+            if nscf_manager is not None and not same_pw_setup(nscf_manager, node, namespace=('nscf', 'pw')):
+                return False
             same_k = k_mesh_to_calc == node.inputs.nscf__kpoints.get_kpoints_mesh()
             old_params = None
             for key in ('qp__yambo__parameters', 'bse__yambo__parameters', 'yres__yambo__parameters'):
@@ -553,49 +615,23 @@ def check_same_yambo(node, params_to_calc, k_mesh_to_calc,what,up_to_p2y=False,f
                 enough_b = node.inputs.nscf__pw__parameters.get_dict()['SYSTEM']['nbnd'] >= bands
             else:
                 enough_b = True
-            for p in what:
-                if 'CPU' in p or 'ROLEs' in p or 'PAR_' in p: 
-                    pass #already_done = node.pk
-                    #l += 1
-                elif 'QPkrange' in p:
-                    if hasattr(node.inputs,'additional_parsing'):
-                        for i in additional:
-                            if i in node.inputs.additional_parsing.get_list() and not (up_to_p2y and not node.called[0].called[0].outputs.remote_folder.is_empty) and enough_b:
-                                already_done = node.pk
-                            else:                          
-                                already_done = False
-                                break 
-                    else: 
-                        if additional==[] and not (up_to_p2y and not node.called[0].called[0].outputs.remote_folder.is_empty) and enough_b: 
-                            already_done = node.pk
-                        else:
-                            already_done = False
-                            break 
+            remote_is_used = up_to_p2y and not node.called[0].called[0].outputs.remote_folder.is_empty
 
-                elif params_to_calc[p][0] == old_params[p][0] and same_k and not was_p2y and not (up_to_p2y and not node.called[0].called[0].outputs.remote_folder.is_empty) and enough_b:
-                    already_done = node.pk
-                else:
-                    already_done = False
-                    break
-            
-            
-            over = abs(len(params_to_calc)-len(old_params))
+            if up_to_p2y:
+                if same_k and remote_is_used and enough_b:
+                    return node.pk
+                return False
 
-            '''if already_done and full and (over == l or over == 0) and not (up_to_p2y and not node.called[0].called[0].outputs.remote_folder.is_empty) and enough_b:
-                already_done = node.pk
-                print('ok')
-
-            elif already_done and full and (over != l or over != 0) and not (up_to_p2y and not node.called[0].called[0].outputs.remote_folder.is_empty):
-                already_done = False
-                print(node.pk)
-                print(len(params_to_calc),len(old_params))
-                print(l,over)'''
-                
-            if up_to_p2y and same_k and not node.called[0].called[0].outputs.remote_folder.is_empty and enough_b:
-                    already_done = node.pk
-                    return already_done
+            if not (same_k and not was_p2y and enough_b and same_yambo_variables(params_to_calc, old_params)):
+                return False
+            if 'QPkrange' in params_to_calc:
+                # the QP we want must be among the ones parsed by the old calculation
+                parsed_before = node.inputs.additional_parsing.get_list() if hasattr(node.inputs, 'additional_parsing') else []
+                if not all(i in parsed_before for i in additional):
+                    return False
+            already_done = node.pk
     
-    except:
+    except Exception:
         already_done = False
     
     return already_done
@@ -711,7 +747,10 @@ def is_nscf_valid(parent_node, input_manager, bands=None):
         return False
 
 
-def check_same_pw(node, k_mesh_to_calc, already_done, bands = None):
+def check_same_pw(node, k_mesh_to_calc, already_done, bands = None, input_manager = None):
+    """Find in `node` the NSCF/SCF calculations we can use as parents. They must be successful and not empty;
+    if `input_manager` (a YamboInputManager) is given, they must have the same structure, pseudopotentials and parameters.
+    """
     parent_nscf = False
     parent_scf = False
     enough_b = True
@@ -720,9 +759,14 @@ def check_same_pw(node, k_mesh_to_calc, already_done, bands = None):
             
             parent_nscf_try = find_pw_parent(node, calc_type=['nscf'])
             parent_scf_try = find_pw_parent(node, calc_type=['scf'])
+            if input_manager is not None:
+                if not same_pw_setup(input_manager.nscf, parent_nscf_try):
+                    parent_nscf_try = None
+                if not same_pw_setup(input_manager.scf, parent_scf_try):
+                    parent_scf_try = None
             same_k = k_mesh_to_calc == node.inputs.nscf__kpoints.get_kpoints_mesh()
             if bands : enough_b = node.inputs.nscf__pw__parameters.get_dict()['SYSTEM']['nbnd'] >= bands
-            if node.is_finished_ok:
+            if node.is_finished_ok and parent_nscf_try is not None:
                 try:
                     y = node.outputs.retrieved._repository._repo_folder.abspath+'/path/'
                     #if 'ns.db1' in  os.listdir(y) and same_k and not node.outputs.remote_folder.is_empty:
@@ -732,10 +776,10 @@ def check_same_pw(node, k_mesh_to_calc, already_done, bands = None):
  
                 except:
                     pass
-            if same_k and parent_nscf_try.is_finished_ok and not parent_nscf_try.outputs.remote_folder.is_empty: 
+            if parent_nscf_try is not None and same_k and parent_nscf_try.is_finished_ok and not parent_nscf_try.outputs.remote_folder.is_empty: 
                 if enough_b:
                     parent_nscf = parent_nscf_try.pk     
-            if parent_scf_try.is_finished_ok and not parent_scf_try.outputs.remote_folder.is_empty: 
+            if parent_scf_try is not None and parent_scf_try.is_finished_ok and not parent_scf_try.outputs.remote_folder.is_empty: 
                 if enough_b:
                     parent_scf = parent_scf_try.pk 
     
@@ -745,14 +789,14 @@ def check_same_pw(node, k_mesh_to_calc, already_done, bands = None):
     return parent_nscf, parent_scf   
 
 def search_in_group(YamboWorkflow_inputs, 
-                                YamboWorkflow_group,
-                                what=['BndsRnXp','GbndRnge','NGsBlkXp'],
-                                full = True,
-                                exclude = [],
-                                up_to_p2y = False,
-                                bands=None,
-                                calc_type='qp'):
+                    YamboWorkflow_group,
+                    up_to_p2y = False,
+                    calc_type='qp'):
+    """Look in the group for calculations we can reuse for the inputs of a YamboInputManager.
 
+    :return: `already_done` (pk of an equivalent successful YamboWorkflow, or False), `parent_nscf` and `parent_scf`
+        (pks of PW calculations, with the same structure, pseudopotentials and parameters, usable as parents, or False).
+    """
     already_done = False
     parent_nscf = False
     parent_scf = False
@@ -773,42 +817,32 @@ def search_in_group(YamboWorkflow_inputs,
         except Exception:
             additional = []
 
-    for k in ['kpoint_mesh','k_mesh_density']:
-        try:
-            what.remove(k)
-        except:
-            pass
-        
-    if 1: 
-        what = copy.deepcopy(list(params_to_calc.keys()))
-        what_2 = copy.deepcopy(what)
-        
-        for e in exclude:
-            for p in what_2:
-                if e in p: 
-                    what.remove(p) 
-        print(what)
-    
-    for old in YamboWorkflow_group.nodes:
-        if old.process_type == 'aiida.workflows:yambo.yambo.yamboconvergence':
-            for i in old.called:
-                already_done = check_same_yambo(i, params_to_calc,k_mesh_to_calc,what,up_to_p2y=up_to_p2y,full=full, bands=bands)
-                if already_done: break
+    def _workflows(group_node):
+        """The YamboWorkflows of a node of the group: itself or the ones called by a YamboConvergence."""
+        if group_node.process_type == 'aiida.workflows:yambo.yambo.yamboconvergence':
+            return list(group_node.called)
+        if group_node.process_type == 'aiida.workflows:yambo.yambo.yambowf':
+            return [group_node]
+        return []
 
-        elif old.process_type == 'aiida.workflows:yambo.yambo.yambowf':
-            already_done = check_same_yambo(old, params_to_calc,k_mesh_to_calc,what,up_to_p2y=up_to_p2y,full=full,additional = additional, bands=bands)        
-        if already_done: break
+    for old in YamboWorkflow_group.nodes:
+        for workflow in _workflows(old):
+            already_done = check_same_yambo(workflow, params_to_calc, k_mesh_to_calc, up_to_p2y=up_to_p2y,
+                                            additional=additional, nscf_manager=YamboWorkflow_inputs.nscf)
+            if already_done:
+                break
+        if already_done:
+            break
             
     for old in YamboWorkflow_group.nodes:
-        if old.process_type == 'aiida.workflows:yambo.yambo.yamboconvergence':
-            for i in old.called:
-                parent_nscf, parent_scf = check_same_pw(i, k_mesh_to_calc, already_done, bands=bands)
-                if parent_nscf: break
-        
-        elif old.process_type == 'aiida.workflows:yambo.yambo.yambowf':
-            parent_nscf, parent_scf = check_same_pw(old, k_mesh_to_calc, already_done, bands=bands)
-        
-        if parent_nscf: break
+        for workflow in _workflows(old):
+            nscf, scf = check_same_pw(workflow, k_mesh_to_calc, already_done, input_manager=YamboWorkflow_inputs)
+            parent_scf = parent_scf or scf # we keep the first SCF we found, also if the following nodes have none
+            if nscf:
+                parent_nscf = nscf
+                break
+        if parent_nscf:
+            break
 
     return already_done, parent_nscf, parent_scf  
 
