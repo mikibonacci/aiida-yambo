@@ -2,7 +2,7 @@
 import numpy as np
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Literal, Union, Optional, Any, List
-from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, KpointMeshConvParam
+from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, KpointMeshConvParam, ScanParam
 from aiida_yambo.utils.high_level_API.general_model import GeneralInputManager
 from aiida_yambo.utils.high_level_API.qe_model import PwBaseWorkChainInputManager
 
@@ -168,11 +168,14 @@ def _coerce_parameters_space(v):
         return []
     out = []
     for item in v:
-        if isinstance(item, (ConvParam, CoupledConvParam, KpointMeshConvParam)):
+        if isinstance(item, (ConvParam, CoupledConvParam, KpointMeshConvParam, ScanParam)):
             out.append(item)
             continue
         if not isinstance(item, dict):
             raise ValueError(f'Invalid parameters_space entry: {item!r}')
+        if item.get('convergence_algorithm') == 'scan':
+            out.append(ScanParam(**item))
+            continue
         variables = item.get('var', [])
         if isinstance(variables, str):
             variables = [variables]
@@ -215,7 +218,7 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     additional_parsing: list = []
     
     # YamboConvergence:
-    parameters_space: List[Union[ConvParam, CoupledConvParam, KpointMeshConvParam]] = []
+    parameters_space: List[Union[ConvParam, CoupledConvParam, KpointMeshConvParam, ScanParam]] = []
     workflow_settings: dict = {}
     parallelism_instructions: dict = None
     group_label: str = None

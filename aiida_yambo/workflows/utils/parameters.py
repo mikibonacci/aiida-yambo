@@ -1,4 +1,6 @@
+import copy
 import itertools
+from builtins import max as builtins_max
 from math import isfinite
 from typing import List, Dict, Any, Union, Tuple, Literal
 import numpy as np
@@ -376,6 +378,97 @@ class CoupledConvParam(ConvParamBase):
             raise ValueError("For 2D, requested points can only be 4 (corners), 5 (corners + center) or 6 (corners + 25%/75% UL->LR diagonal).")
 
 
+#: default units of the variables we usually converge (used to build a ScanParam from a list of dictionaries)
+DEFAULT_UNITS = {
+    'FFTGvecs': 'Ry', 'NGsBlkXp': 'Ry', 'NGsBlkXs': 'Ry', 'BSENGBlk': 'Ry',
+    'BndsRnXp': '', 'BndsRnXs': '', 'GbndRnge': '',
+    'kpoint_density': '1/A', 'kpoint_mesh': 'mesh',
+}
+
+
+class ScanParam(ConvParamBase):
+    """
+    Explicit list of parameter sets to be computed, without any convergence evaluation.
+
+    Every set (a point of ``points``) gives a value to each of the variables in ``var``, and one
+    calculation is run for each set. It is the parameter space of a *scan*: useful to run tests,
+    or to collect data for an ad hoc post processing.
+
+    Example:
+        scan = ScanParam.from_dicts([
+            {'FFTGvecs': 10, 'BndsRnXp': 100, 'NGsBlkXp': 2},
+            {'FFTGvecs': 15, 'BndsRnXp': 200, 'NGsBlkXp': 4},
+        ])
+    """
+    var: List[str]
+    points: List[List[Any]]
+    units: Union[str, List[str]] = ''
+    # Dictionary mapping a variable to the other variables which get the same value: e.g., {'BndsRnXp': ['GbndRnge']}
+    mirror_values: Dict[str, List[str]] = Field(default_factory=dict)
+    convergence_algorithm: str = 'scan'
+    steps: int = 1 # always the number of points, see `_validate_points`
+
+    @staticmethod
+    def _check_value(variable, value):
+        values = value if isinstance(value, (list, tuple)) else [value]
+        if not values or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v) for v in values):
+            raise ValueError(f"Variable '{variable}': the values must be finite numbers (or lists of numbers), got {value!r}.")
+
+    @model_validator(mode='after')
+    def _validate_points(self):
+        if not self.var or any(not name for name in self.var) or len(set(self.var)) != len(self.var):
+            raise ValueError('The variables of a scan must be non-empty and distinct.')
+        if not self.points:
+            raise ValueError('A scan needs at least one point.')
+        for point in self.points:
+            if len(point) != len(self.var):
+                raise ValueError(f'Each point must give a value to every variable {self.var}, got {point}.')
+            for name, value in zip(self.var, point):
+                self._check_value(name, value)
+        if isinstance(self.units, list) and len(self.units) != len(self.var):
+            raise ValueError("'units' must have one entry for each variable.")
+        self.steps = len(self.points)
+        return self
+
+    @classmethod
+    def from_dicts(cls, points: List[Dict[str, Any]], units: Union[str, List[str], Dict[str, str], None] = None,
+                   mirror_values: Union[Dict[str, List[str]], None] = None, **kwargs) -> 'ScanParam':
+        """Build the scan from a list of dictionaries ``{variable: value}``, one for each calculation.
+
+        :param units: units of the variables: a dictionary (the missing ones come from ``DEFAULT_UNITS``), or a list in the order of the variables.
+        :param mirror_values: variables which take the value of another one. By default, GbndRnge follows BndsRnXp if it is not itself in the scan.
+        """
+        if not points:
+            raise ValueError('A scan needs at least one point.')
+        var = list(points[0].keys())
+        for point in points:
+            if set(point) != set(var):
+                raise ValueError(f'All the points must define the same variables {var}, got {sorted(point)}.')
+        if units is None or isinstance(units, dict):
+            units = [(units or {}).get(name, DEFAULT_UNITS.get(name, '')) for name in var]
+        if mirror_values is None:
+            mirror_values = {'BndsRnXp': ['GbndRnge']} if 'BndsRnXp' in var and 'GbndRnge' not in var else {}
+        return cls(var=var, points=[[point[name] for name in var] for point in points], units=units,
+                   mirror_values=mirror_values, **kwargs)
+
+    @property
+    def max(self) -> List[Any]:
+        """The largest value of each variable (None if the values are not scalars, e.g. k-point meshes)."""
+        maxima = []
+        for index in range(len(self.var)):
+            column = [point[index] for point in self.points]
+            maxima.append(None if any(isinstance(v, (list, tuple)) for v in column) else builtins_max(column))
+        return maxima
+
+    def check_bounds(self) -> Tuple[bool, str]:
+        """A scan has no bounds to be exceeded."""
+        return True, "Valid"
+
+    def build_points(self) -> List[List[Any]]:
+        """The explicit sets of values, one list (aligned with ``var``) for each calculation."""
+        return copy.deepcopy(self.points)
+
+
 def create_parameter_space_inputs(params: List[Union[ConvParam, CoupledConvParam]]) -> list:
     """Helper utility to compile a list of parameter configurations into raw dictionaries."""
     return [p.to_dict() for p in params]
@@ -397,6 +490,11 @@ def load_parameter_space(raw_dicts: List[Dict[str, Any]]) -> List[Union[ConvPara
     instantiated_params = []
     
     for d in raw_dicts:
+        if d.get('convergence_algorithm') == 'scan':
+            # a scan can have any number of variables
+            instantiated_params.append(ScanParam(**d))
+            continue
+
         # Extract the list of variables to determine dimensionality
         variables = d.get('var', [])
         if isinstance(variables, str):
