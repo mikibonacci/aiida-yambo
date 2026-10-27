@@ -1,20 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Classes for calcs e wfls analysis. hybrid AiiDA and not_AiiDA...hopefully"""
-from __future__ import absolute_import
-import numpy as np
-from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt, style
-import pandas as pd
+"""Fixes applied by the error handlers of YamboRestart."""
 import copy
-import cmath
-
-try:
-    from aiida.orm import Dict, Str, load_node, KpointsData
-    from aiida.plugins import CalculationFactory, DataFactory
-    from aiida_yambo.utils.common_helpers import *
-    from aiida_yambo.utils.parallelism_finder import *
-except:
-    pass
 
 ################################################################################
 '''
@@ -60,7 +46,7 @@ def fix_memory(resources, failed_calc, exit_status, max_nodes, iteration):
 
         try:
             has_gpu = failed_calc.outputs.output_parameters.get_dict()['has_gpu']
-        except Exception:
+        except (KeyError, AttributeError): # no information on the GPU
             has_gpu = False
 
         if not has_gpu:
