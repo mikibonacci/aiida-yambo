@@ -1,33 +1,24 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import
-import sys
-import warnings
+import logging
 from contextlib import contextmanager
 from copy import deepcopy
 
-from aiida.common import AttributeDict
-from aiida_yambo.utils.high_level_API.yambo_model import YamboRestartInputManager
-from aiida_yambo.utils.high_level_API.general_model import ResourcesModel
-
-from aiida.orm import RemoteData
-from aiida.orm import Str, Dict, Int, Bool, StructureData
 from aiida import orm
-
-from aiida.common import ValidationError
-
-from aiida.engine import WorkChain, while_
-from aiida.engine import ToContext
-from aiida.engine import submit
+from aiida.common import AttributeDict
+from aiida.engine import while_
 from aiida.engine.processes.workchains.restart import BaseRestartWorkChain
 from aiida.engine.processes.workchains.utils import ProcessHandlerReport, process_handler
+from aiida.orm import Bool, Dict, Int, RemoteData, Str
+from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
 from aiida_yambo.calculations.yambo import YamboCalculation
-from aiida_yambo.workflows.utils.helpers_yamborestart import *
-from aiida_yambo.utils.parallel_namelists import *
-from aiida_yambo.utils.defaults.create_defaults import *
-from aiida_yambo.utils.common_helpers import *
+from aiida_yambo.utils.common_helpers import find_pw_parent, take_calc_from_remote
+from aiida_yambo.utils.high_level_API.general_model import ResourcesModel
+from aiida_yambo.utils.high_level_API.yambo_model import YamboRestartInputManager
+from aiida_yambo.utils.parallel_namelists import check_para_namelists, check_variables
+from aiida_yambo.workflows.utils.helpers_yamborestart import fix_memory, fix_parallelism, fix_time
 
-from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
+LOGGER = logging.getLogger(__name__)
 
 class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
 
@@ -99,7 +90,7 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         preprocessing_code,
         code,
         protocol='fast',
-        overrides={},
+        overrides=None,
         parent_folder=None,
         NLCC=False,
         RIM_v=False,
@@ -111,6 +102,7 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
         :return: a process builder instance with all inputs defined ready for launch.
         """
+        overrides = {} if overrides is None else overrides
         from aiida_quantumespresso.workflows.protocols.utils import recursive_merge
 
         if isinstance(code, str):
@@ -126,8 +118,8 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
             pw_parent = find_pw_parent(take_calc_from_remote(parent_folder,level=-1))
             ecutwfc = pw_parent.inputs.parameters.get_dict()['SYSTEM']['ecutwfc']
             nelectrons = int(pw_parent.outputs.output_parameters.get_dict()['number_of_electrons'])
-        except:
-            pass
+        except Exception as exc: # no (valid) parent: we keep the values given as arguments
+            LOGGER.debug('cannot take ecutwfc and nelectrons from the parent: %s', exc)
 
         # Update the parameters based on the protocol inputs
         parameters = inputs['yambo']['parameters']
@@ -183,11 +175,11 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
             parameters['variables']['QPkrange'] = [[[1, 1, 32, 32,]], ''] #fictitious
 
         if not 'bse' in protocol:
-            print('Summary of the main inputs:\nBndsRnXp = {}\nGbndRnge = {}\nNGsBlkXp = {} {}\nFFTGvecs = {} {}\n'\
+            LOGGER.info('Summary of the main inputs:\nBndsRnXp = {}\nGbndRnge = {}\nNGsBlkXp = {} {}\nFFTGvecs = {} {}\n'\
                 .format(parameters['variables']['BndsRnXp'][0][1],parameters['variables']['GbndRnge'][0][1],parameters['variables']['NGsBlkXp'][0],parameters['variables']['NGsBlkXp'][1],\
                 parameters['variables']['FFTGvecs'][0],parameters['variables']['FFTGvecs'][1]))
         else:
-            print('Summary of the main inputs:\nBndsRnXs = {}\nNGsBlkXs = {} {}\nBSENGBlk = {} {}\nFFTGvecs = {} {}\n'\
+            LOGGER.info('Summary of the main inputs:\nBndsRnXs = {}\nNGsBlkXs = {} {}\nBSENGBlk = {} {}\nFFTGvecs = {} {}\n'\
                 .format(parameters['variables']['BndsRnXs'][0][1],parameters['variables']['NGsBlkXs'][0],parameters['variables']['NGsBlkXs'][1],\
                 parameters['variables']['BSENGBlk'][0],parameters['variables']['BSENGBlk'][1],\
                 parameters['variables']['FFTGvecs'][0],parameters['variables']['FFTGvecs'][1]))
@@ -258,13 +250,13 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
                 if new_para:
                     manager.parameters['variables'].update(new_para)
                     self.report('adjusting bse namelist... please check yambo documentation')
-            except Exception:
-                pass
+            except Exception as exc: # e.g. no BSE variables
+                LOGGER.debug('no bse namelist to check: %s', exc)
             required_bands = manager.get_Nb()
 
         try:
             nscf_parent = find_pw_parent(take_calc_from_remote(self.inputs.parent_folder, level=-1))
-        except Exception:
+        except Exception: # the parent is not a PW calculation: it is already the yambo one
             nscf_parent = take_calc_from_remote(self.inputs.parent_folder, level=-1)
         if nscf_parent.inputs.parameters.get_dict()['SYSTEM']['nbnd'] < required_bands:
             self.report('You must run an nscf with nbnd at least =  {}'.format(required_bands))
@@ -285,7 +277,8 @@ class YamboRestart(ProtocolMixin, BaseRestartWorkChain):
         try: #sometimes "Authentication timeout".
             if self.ctx.inputs['parent_folder'].is_empty: 
                 return self.exit_codes.EMPTY_PARENT
-        except:
+        except Exception as exc:
+            self.report(f'Could not check if the parent folder is empty ({exc}), assuming it is not.')
             self.ctx.inputs['parent_folder'] = self.inputs.parent_folder
 
     def report_error_handled(self, calculation, action):
