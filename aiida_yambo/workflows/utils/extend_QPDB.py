@@ -1,11 +1,13 @@
+import logging
 import xarray
 import numpy as np
-import matplotlib.pyplot as plt
-import netCDF4
-from aiida_yambo.utils.common_helpers import *
+from aiida.orm import load_node
+from aiida_yambo.utils.common_helpers import find_pw_parent
 from ase import units
 
-def build_ndbQP(db_path,DFT_pk,Nb=[1,1],Nk=1,verbose=False):
+LOGGER = logging.getLogger(__name__)
+
+def build_ndbQP(db_path,DFT_pk,Nb=(1,1),Nk=1,verbose=False):
     
     '''
     This just build a QP with KS results, then you can modify the script to change
@@ -19,7 +21,7 @@ def build_ndbQP(db_path,DFT_pk,Nb=[1,1],Nk=1,verbose=False):
     data = {}
     for k in db.variables.keys():
         data[k] = (db[k].dims, db[k].data)
-        if verbose: print(data[k])
+        if verbose: LOGGER.info(data[k])
     
     Nb=list(range(Nb[0],Nb[1]+1))
     dimensions = {}
@@ -37,7 +39,7 @@ def build_ndbQP(db_path,DFT_pk,Nb=[1,1],Nk=1,verbose=False):
     kpoints = pw.outputs.output_band.get_kpoints().reshape(3,Nk)
     #kpoints = db.QP_kpts.data[:]
     fermi = pw.outputs.output_parameters.get_dict()['fermi_energy']
-    print('Fermi=',fermi)
+    LOGGER.info('Fermi= %s', fermi)
     
     SOC = pw.outputs.output_parameters.get_dict()['spin_orbit_calculation']
     nelectrons = pw.outputs.output_parameters.get_dict()['number_of_electrons']
@@ -101,7 +103,7 @@ def Apply_FD_scissored_correction(start,corrections,scissor,mu,e_ref=0,T=1e-6,un
     e_ref = e_ref/unit
     return FD_even(start,mu,e_ref,T)*(corrections+start)+(1-FD_even(start,mu,e_ref,T))*(start*scissor[0]+scissor[1])
 
-def update_FD_and_scissor(db_dft,db_gw,conduction,mu,scissors=[[1,0],[1,0]],e_ref=0,T=1e-6,verbose=False,full_bands=True):
+def update_FD_and_scissor(db_dft,db_gw,conduction,mu,scissors=None,e_ref=0,T=1e-6,verbose=False,full_bands=True):
     '''
     update with FD*realGW for the region of interest, then scissor(DFT) for the 
     outside region. 
@@ -112,7 +114,7 @@ def update_FD_and_scissor(db_dft,db_gw,conduction,mu,scissors=[[1,0],[1,0]],e_re
     dss = db_dft
     
     # a missing fit means no scissor: keep the DFT/KS value.
-    scissors = [(s if s is not None else [1, 0]) for s in scissors]
+    scissors = [(s if s is not None else [1, 0]) for s in (scissors if scissors is not None else [None, None])]
     
     #update the qp where possible, so we introduce the QP that we have in db:
     for i in range(len(db_gw.QP_table[0,:])):
