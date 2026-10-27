@@ -1,19 +1,16 @@
-#!/usr/bin/env runaiida
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import
-from __future__ import print_function
-import sys
+import logging
 import os
 import shutil
-import matplotlib
-from mpl_toolkits.mplot3d import Axes3D
+
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
+
 from aiida.orm import load_node
-from aiida_yambo.utils.common_helpers import *
-from aiida_yambo.parsers.utils import *
 from aiida.orm.nodes.process.workflow.workchain import WorkChainNode
+from aiida_yambo.parsers.utils import yambotiming_to_seconds
+from aiida_yambo.utils.common_helpers import find_pw_parent, get_distance_from_kmesh
+
+LOGGER = logging.getLogger(__name__)
 
 def take_fermi(calc_node_pk):  # calc_node_pk = node_conv_wfl.outputs.last_calculation
 
@@ -24,16 +21,17 @@ def take_fermi(calc_node_pk):  # calc_node_pk = node_conv_wfl.outputs.last_calcu
             file = open(path_folder+i,'r')
     for line in file:
         if '[X]Fermi Level' in line:
-            print('The Fermi level is {}'.format(line.split()[3]))
+            LOGGER.info('The Fermi level is {}'.format(line.split()[3]))
             ef = float(line.split()[3])
         if '[X] Fermi Level' in line:
-            print('The Fermi level is {}'.format(line.split()[4]))
+            LOGGER.info('The Fermi level is {}'.format(line.split()[4]))
             ef = float(line.split()[4])
 
     return ef
 
-def collect_all_params(story, param_list=['BndsRnXp','GbndRnge','NGsBlkXp']):
+def collect_all_params(story, param_list=None):
     
+    param_list = ['BndsRnXp','GbndRnge','NGsBlkXp'] if param_list is None else param_list
     if isinstance(story,WorkChainNode):
         y = story.outputs.story.get_dict() 
         df= pd.DataFrame(y)
@@ -90,9 +88,9 @@ def collect_2D_results(story=None, last_c=None, ef = 0):    #returns array (val_
     
     if last_c:
         ef = take_fermi(last_c.pk)
-        print('Fermi Energy is {} eV'.format(ef))
+        LOGGER.info('Fermi Energy is {} eV'.format(ef))
     else:
-        print('setting Fermi Energy to zero eV, if you need Ef just provide last_c=<pk_calc> as input') 
+        LOGGER.info('setting Fermi Energy to zero eV, if you need Ef just provide last_c=<pk_calc> as input') 
 
     if isinstance(p['value'].iloc[0],list): 
         len_val = len(p['value'].iloc[0]) 
@@ -106,7 +104,7 @@ def collect_2D_results(story=None, last_c=None, ef = 0):    #returns array (val_
     else: 
         cols = cols+1    
 
-    print('variables are {}'.format(p['var'].iloc[0]))    
+    LOGGER.debug('variables are {}'.format(p['var'].iloc[0]))    
 
     k = np.zeros((rows,cols)) 
     for i in range(rows): 
@@ -127,7 +125,7 @@ def parse_2D_data(wfl_pk, folder_name='', title='run', last_c_ok_pk=None):
 
     if folder_name == '':
         folder_name = 'results_'+str(wfl_pk)
-    print('the folder name will be: {}'.format(folder_name))
+    LOGGER.debug('the folder name will be: {}'.format(folder_name))
     
     k, p = collect_results(wfl_pk, last_c=last_c_ok_pk)
     
@@ -137,17 +135,17 @@ def parse_2D_data(wfl_pk, folder_name='', title='run', last_c_ok_pk=None):
         os.mkdir(folder_name+'/DATA/LOG/')
     for i in range(len(k)):
         try:
-            print(int(p['calc_pk'].iloc[i]))
+            LOGGER.debug(int(p['calc_pk'].iloc[i]))
             repo = load_node(int(p['calc_pk'].iloc[i])).outputs.retrieved._repository._repo_folder.abspath
             repo +='/path/'
             title = ''
             for j in range(len((p['var'].iloc[0]))):
                 title += '_'+str(int(k[i,j]))
-            print('the title will be: \n {}'.format(title))
+            LOGGER.debug('the title will be: \n {}'.format(title))
             if not load_node(int(p['calc_pk'].iloc[i])).is_finished_ok:
                 title += 'failed'
             for file in os.listdir(repo):
-                print(file)
+                LOGGER.debug(file)
                 if 'o-' in file:
                     shutil.copyfile(repo+file,folder_name+'/DATA/o-'+title+'.qp_'+str(int(p['calc_pk'].iloc[i])))
                 elif 'l-' in file:
@@ -155,8 +153,8 @@ def parse_2D_data(wfl_pk, folder_name='', title='run', last_c_ok_pk=None):
                 elif 'r-' in file and not 'er-' in file:
                     shutil.copyfile(repo+file,folder_name+'/DATA/r-'+title+'_'+str(int(p['calc_pk'].iloc[i]))) 
                     np.set_printoptions(suppress=True)
-        except:
-            pass
+        except (OSError, AttributeError) as exc: # missing retrieved folder / files of the calculation
+            LOGGER.warning('could not copy the files of calculation %s: %s', int(p['calc_pk'].iloc[i]), exc)
        
     tot=''
     try:
@@ -164,28 +162,28 @@ def parse_2D_data(wfl_pk, folder_name='', title='run', last_c_ok_pk=None):
             for line in resume.readlines():
                 tot += line 
                 tot += '\n'
-    except:
-        print('not file with results found, creating....')
+    except FileNotFoundError:
+        LOGGER.info('not file with results found, creating....')
         
         
-    print('tot is {}'.format(tot))       
+    LOGGER.debug('tot is {}'.format(tot))       
     with open(folder_name+'/results.txt', 'a+') as resume:
         for i in range(len(k)):
             can_write= False
             res = str(k[i,:]).replace('[','').replace(']','')
-            print('can I write {} ? '.format(res))
+            LOGGER.debug('can I write {} ? '.format(res))
             if res.split()[-1] != '0.':
-                print('can')
+                LOGGER.debug('can')
                 can_write = True
             else:
-                print('cannot_ wrong')
+                LOGGER.debug('cannot_ wrong')
                 can_write = False
             if res+'\n' in tot:
-                print('cannot')
+                LOGGER.debug('cannot')
                 can_write = False
             if can_write:
-                print('can write')
-                print(str(res.split()[-1]))
+                LOGGER.debug('can write')
+                LOGGER.debug(str(res.split()[-1]))
                 resume.write(res)
                 resume.write('\n')
     
