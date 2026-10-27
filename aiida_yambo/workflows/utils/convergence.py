@@ -29,58 +29,6 @@ class ConvergenceAnalyzer:
         self.last_succeeded_pk = None
         self.last_succeeded_uuid = None
 
-    def _normalize_value(self, raw_value: Any, var_name: str) -> Any:
-        if raw_value is None:
-            return None
-        if isinstance(raw_value, list) and len(raw_value) > 0:
-            first = raw_value[0]
-            if isinstance(first, list) and len(first) > 1:
-                return first[1]
-            if var_name == 'kpoint_mesh' and isinstance(first, (list, tuple)):
-                return first
-            return first
-        return raw_value
-
-    def _build_history(self, nodes: List[Any]) -> pd.DataFrame:
-        records = []
-
-        for node in nodes:
-            row = {
-                'uuid': node.uuid,
-                'failed': not getattr(node, 'is_finished_ok', False)
-            }
-
-            for var in self.parameters.var:
-                if 'mesh' in var:
-                    try:
-                        row[var] = node.inputs.nscf__kpoints.get_kpoints_mesh()[0]
-                    except Exception:
-                        row[var] = None
-                    continue
-
-                try:
-                    variables = node.inputs.yres__yambo__parameters.get_dict()['variables']
-                    raw_value = variables.get(var)
-                    row[var] = self._normalize_value(raw_value, var)
-                except Exception:
-                    row[var] = None
-
-            for quantity in self.what:
-                if getattr(node, 'is_finished_ok', False):
-                    try:
-                        row[quantity] = node.outputs.output_ywfl_parameters.get_dict().get(quantity)
-                    except Exception:
-                        row[quantity] = None
-                else:
-                    row[quantity] = None
-
-            records.append(row)
-
-        if not records:
-            raise ValueError('No calculation nodes were provided to ConvergenceAnalyzer.')
-
-        return pd.DataFrame(records)
-
     def _build_grid(self) -> Dict[str, Any]:
         if self.history is None or self.history.empty:
             raise ValueError('Cannot build grid without history.')
@@ -216,45 +164,6 @@ class ConvergenceAnalyzer:
             'new_grid': self.new_grid,
         }
 
-    def analyze(self, nodes: List[Any]) -> Dict[str, Any]:
-        self.history = self._build_history(nodes)
-        self.none_encountered = bool(self.history['failed'].any())
-        self.last_succeeded_node = next((node for node in reversed(nodes) if getattr(node, 'is_finished_ok', False)), None)
-
-        if self.none_encountered:
-            return {'status': 'FAILED_CALCULATION', 'hints': self.hints}
-
-        if not self.parameters.check_bounds()[0]:
-            return {'status': 'SPACE_EXCEEDED', 'hints': self.hints}
-
-        for quantity in self.what:
-            result = self._calculate_predictor(quantity)
-            self.hints.update(result.get('hints', {}) or {})
-            self.next_step = result.get('next_step', {})
-            self.new_grid = result.get('new_grid', True)
-            self.check_single_point = not self.new_grid
-            if self.check_single_point and self.next_step:
-                pt = [self.next_step[var] for var in self.parameters.var if var in self.next_step]
-                # 1-var groups use bare values as grid points (like
-                # build_stepped_space returns [5,5,5], not [[5,5,5]]);
-                # only multi-var groups wrap the values in a list.
-                self.inquired_point = pt[0] if len(self.parameters.var) == 1 else pt
-
-            if not result['converged']:
-                return {
-                    'status': 'CONTINUE',
-                    'hints': self.hints,
-                    'next_step': self.next_step,
-                    'new_grid': self.new_grid,
-                }
-
-        return {
-            'status': 'CONVERGED',
-            'hints': self.hints,
-            'next_step': self.next_step,
-            'new_grid': self.new_grid,
-        }
-
 
 class ConvergenceEvaluator(BaseModel):
     """
@@ -327,19 +236,6 @@ class ConvergenceEvaluator(BaseModel):
         # not force the workflow into an extra loop lap.
         return (not self.success) and self.concurrent_steps_count < self.parameters.steps
     
-    def evaluate_nodes(self, nodes: List[Any]) -> Dict[str, Any]:
-        self.analyzer = ConvergenceAnalyzer(self.parameters, self.what, hints=self.hints)
-        self.decision = self.analyzer.analyze(nodes)
-        self.history = self.analyzer.history
-        self.none_encountered = self.analyzer.none_encountered
-        self.last_succeeded_node = self.analyzer.last_succeeded_node
-        self.next_step = self.analyzer.next_step
-        self.new_grid = self.analyzer.new_grid
-        self.check_single_point = self.analyzer.check_single_point
-        self.inquired_point = self.analyzer.inquired_point
-        self.hints = self.analyzer.hints
-        return self.decision
-
     def evaluate_dataframe(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Evaluate convergence from a pre-filled dataframe (no node loading).
 

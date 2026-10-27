@@ -531,78 +531,6 @@ def gap_mapping_from_nscf(nscf_pk, additional_parsing_List=[]):
 
     return mapping
 
-def check_identical_calculation(YamboWorkflow_inputs, 
-                                YamboWorkflow_list,
-                                what=['BndsRnXp','GbndRnge','NGsBlkXp',],
-                                full = True,
-                                exclude = ['CPU','ROLEs','QPkrange']):
-
-    already_done = False
-    parent_nscf = False
-    try:
-        k_mesh_to_calc = YamboWorkflow_inputs.nscf.kpoints.get_kpoints_mesh()
-        params_to_calc = YamboWorkflow_inputs.yres.yambo.parameters.get_dict()
-    except:
-        k_mesh_to_calc = YamboWorkflow_inputs.nscf__kpoints.get_kpoints_mesh()
-        params_to_calc = YamboWorkflow_inputs.yres__yambo__parameters.get_dict()        
-    for k in ['kpoint_mesh','k_mesh_density']:
-        try:
-            what.remove(k)
-        except:
-            pass
-        
-    if full: 
-        what = copy.deepcopy(list(params_to_calc.keys()))
-        what_2 = copy.deepcopy(what)
-        #print(what)
-        for e in exclude:
-            #print(e)
-            for p in what_2:
-                if e in p: 
-                    what.remove(p)
-                    #print(p)
-        #print(what)            
-    
-    for old in YamboWorkflow_list:
-        try:
-            if load_node(old).is_finished_ok:
-                same_k = k_mesh_to_calc == load_node(old).inputs.nscf__kpoints.get_kpoints_mesh()
-                old_params = load_node(old).inputs.yres__yambo__parameters.get_dict()
-                for p in what:
-                    if 'CPU' in p or 'ROLEs' in p or 'PAR' in p: continue
-                    #print(p,params_to_calc[p],old_params[p])
-                    if params_to_calc[p] == old_params[p] and same_k:
-                        already_done = old
-                    else:
-                        already_done = False
-                        break
-
-            if already_done: break
-        except:
-            already_done = False
-    
-    for old in YamboWorkflow_list:
-        try:
-            if  not already_done and not load_node(old).is_finished_ok:
-                print(old)
-                parent_nscf_try = find_pw_parent(load_node(old).called[0], calc_type=['nscf'])
-                same_k = k_mesh_to_calc == load_node(old).inputs.nscf__kpoints.get_kpoints_mesh()
-                try:
-                    y = load_node(old).outputs.retrieved._repository._repo_folder.abspath+'/path/'
-                    #if 'ns.db1' in  os.listdir(y) and same_k:
-                    if same_k:
-                        parent_nscf = old            
-                except:
-                    pass
-                if parent_nscf: break
-                if same_k and parent_nscf_try.is_finished_ok: 
-                    parent_nscf = parent_nscf_try.pk
-            if parent_nscf: break       
-        except:
-            parent_nscf = False
-
-    return already_done, parent_nscf 
-
 def check_same_yambo(node, params_to_calc, k_mesh_to_calc,what,up_to_p2y=False,full=True,additional=[], bands=None):
     l = 0 
     already_done = False
@@ -828,21 +756,10 @@ def search_in_group(YamboWorkflow_inputs,
     already_done = False
     parent_nscf = False
     parent_scf = False
-    try:
-        k_mesh_to_calc = YamboWorkflow_inputs.nscf.get_mesh()
-    except Exception:
-        try:
-            k_mesh_to_calc = YamboWorkflow_inputs.nscf.kpoints.get_kpoints_mesh()
-        except Exception:
-            k_mesh_to_calc = YamboWorkflow_inputs.nscf__kpoints.get_kpoints_mesh()
-    try:
-        yambo_manager = YamboWorkflow_inputs.bse if 'bse' in calc_type else YamboWorkflow_inputs.qp
-        params_to_calc = yambo_manager.parameters['variables']
-    except Exception:
-        try:
-            params_to_calc = YamboWorkflow_inputs.yres.yambo.parameters.get_dict()['variables']
-        except Exception:
-            params_to_calc = YamboWorkflow_inputs.yres__yambo__parameters.get_dict()['variables']
+    # YamboWorkflow_inputs is a YamboInputManager
+    k_mesh_to_calc = YamboWorkflow_inputs.nscf.get_mesh()
+    yambo_manager = YamboWorkflow_inputs.bse if 'bse' in calc_type else YamboWorkflow_inputs.qp
+    params_to_calc = yambo_manager.parameters['variables']
     # `additional_parsing` can be either an orm.List node (legacy builder inputs)
     # or a plain python list (YamboInputManager): support both.
     additional_parsing = getattr(YamboWorkflow_inputs, 'additional_parsing', None)

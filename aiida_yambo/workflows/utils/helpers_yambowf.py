@@ -171,14 +171,10 @@ def quantumespresso_input_validator(workchain_inputs, calc_type='qp'):
     
     messages = []
 
-    is_legacy = hasattr(workchain_inputs, 'yres')
-    if is_legacy:
-        variables = workchain_inputs.yres.yambo.parameters.get_dict()['variables']
-        qp_variables = workchain_inputs.qp.yambo.parameters.get_dict()['variables'] if hasattr(workchain_inputs, 'qp') else {}
-    else:
-        yambo_manager = workchain_inputs.bse if 'bse' in calc_type else workchain_inputs.qp
-        variables = copy.deepcopy(yambo_manager.parameters['variables'])
-        qp_variables = copy.deepcopy(yambo_manager.parameters['variables'])
+    # workchain_inputs is a YamboInputManager
+    yambo_manager = workchain_inputs.bse if 'bse' in calc_type else workchain_inputs.qp
+    variables = copy.deepcopy(yambo_manager.parameters['variables'])
+    qp_variables = copy.deepcopy(yambo_manager.parameters['variables'])
 
     yambo_bandsX = variables.pop('BndsRnXp', [[0], ''])[0][-1]
     yambo_bandsX_bse = variables.pop('BndsRnXs', [[0], ''])[0][-1]
@@ -228,10 +224,7 @@ def quantumespresso_input_validator(workchain_inputs, calc_type='qp'):
 
     if scf_params_parent:
         scf_params = scf_params_parent
-    elif is_legacy and hasattr(workchain_inputs.scf.pw, 'parameters'):
-        scf_params = workchain_inputs.scf.pw.parameters
-        messages.append('scf inputs found')
-    elif not is_legacy and workchain_inputs.scf.parameters:
+    elif workchain_inputs.scf.parameters:
         scf_params = workchain_inputs.scf.parameters
         messages.append('scf inputs found')
     else:
@@ -244,14 +237,7 @@ def quantumespresso_input_validator(workchain_inputs, calc_type='qp'):
             redo_nscf = True
             nscf_params = _set_nbnd(nscf_params, gwbands)
             messages.append('and setting nbnd of the nscf calculation to b = {}'.format(gwbands))
-    elif is_legacy and hasattr(workchain_inputs.nscf.pw, 'parameters'):
-        nscf_params = workchain_inputs.nscf.pw.parameters
-        messages.append('nscf inputs found')
-        if _get_nbnd(nscf_params) < gwbands:
-            redo_nscf = True
-            nscf_params = _set_nbnd(nscf_params, gwbands)
-            messages.append(', and setting nbnd of the nscf calculation to b = {}'.format(gwbands))
-    elif not is_legacy and workchain_inputs.nscf.parameters:
+    elif workchain_inputs.nscf.parameters:
         nscf_params = workchain_inputs.nscf.parameters
         messages.append('nscf inputs found')
         if _get_nbnd(nscf_params) < gwbands:
