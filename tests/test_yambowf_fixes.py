@@ -166,3 +166,139 @@ def test_select_convergence_parameters_follows_the_requested_order(yamboconverge
 def test_select_convergence_parameters_rejects_unknown_names(yamboconvergence):
     with pytest.raises(ValueError):
         yamboconvergence.select_convergence_parameters(list(_parameter_space()), ['EXXRLvcs'])
+
+
+def _write_qp_db(path, eo, qp_e):
+    import xarray
+
+    n_qp = len(eo)
+    xarray.Dataset({
+        'QP_table': (('three', 'n_qp'), np.array([list(range(1, n_qp + 1)), [1] * n_qp, [1] * n_qp])),
+        'QP_Eo': (('n_qp',), np.array(eo, dtype=float)),
+        'QP_E': (('n_qp', 'comp'), np.stack([np.array(qp_e, dtype=float), np.zeros(n_qp)], axis=1)),
+    }).to_netcdf(path)
+
+
+def test_sanity_check_qp_fits_the_outliers(yambowf, tmp_path):
+    import xarray
+
+    eo = [0.0, 0.1, 0.5, 0.6, 0.7]
+    qp_e = [1.1 * e + 0.01 for e in eo]
+    qp_e[4] = eo[4] + 1.0  # 27 eV correction: not reliable
+    _write_qp_db(tmp_path / 'in.nc', eo, qp_e)
+
+    output, fit_v, fit_c = yambowf.sanity_check_QP(2, 3, str(tmp_path / 'in.nc'), str(tmp_path / 'out.nc'))
+
+    assert fit_c == pytest.approx([1.1, 0.01])
+    with xarray.open_dataset(output) as fixed:
+        # outlier replaced by the fit, then everything aligned to the valence band maximum
+        assert fixed.QP_E[4, 0] == pytest.approx(1.1 * 0.7 + 0.01 - (1.1 * 0.1 + 0.01))
+        assert fixed.QP_E[1, 0] == pytest.approx(0.0)
+
+
+def test_sanity_check_qp_without_enough_conduction_states(yambowf, tmp_path):
+    import xarray
+
+    eo = [0.0, 0.1, 0.5, 0.6]
+    qp_e = [e + 0.01 for e in eo]
+    qp_e[3] = eo[3] + 1.0
+    _write_qp_db(tmp_path / 'in.nc', eo, qp_e)
+
+    output, fit_v, fit_c = yambowf.sanity_check_QP(2, 3, str(tmp_path / 'in.nc'), str(tmp_path / 'out.nc'))
+
+    assert fit_v is not None and fit_c is None  # a single reliable conduction state: no fit
+    with xarray.open_dataset(output) as fixed:
+        assert fixed.QP_E[3, 0] == pytest.approx(eo[3] + 1.0 - 0.11)  # left untouched (only aligned)
+
+
+def test_sanity_check_qp_threshold_is_configurable(yambowf, tmp_path):
+    eo = [0.0, 0.1, 0.5, 0.6, 0.7]
+    _write_qp_db(tmp_path / 'in.nc', eo, [e + 0.01 for e in eo])
+
+    # 0.01 Ha = 0.27 eV: with a 0.1 eV threshold all the states are "wrong", so there is no reliable fit
+    _, fit_v, fit_c = yambowf.sanity_check_QP(2, 3, str(tmp_path / 'in.nc'), str(tmp_path / 'out.nc'), max_correction_eV=0.1)
+
+    assert fit_v is None and fit_c is None
+
+
+def _fake_merge_environment(yambowf, monkeypatch, tmp_path, run):
+    pw = SimpleNamespace(outputs=SimpleNamespace(output_parameters=SimpleNamespace(get_dict=lambda: {
+        'spin_orbit_calculation': False, 'number_of_electrons': 4})))
+    monkeypatch.setattr(yambowf, 'find_pw_parent', lambda node: pw)
+    monkeypatch.setattr(yambowf, 'load_node', lambda pk: object())
+    monkeypatch.setattr(yambowf.subprocess, 'run', run)
+
+
+def test_merge_qp_runs_yambopy_and_checks_the_result(yambowf, monkeypatch, tmp_path):
+    from aiida import orm
+
+    eo = [0.0, 0.1, 0.5, 0.6]
+
+    def run(command, check):
+        assert command[:2] == ['yambopy', 'mergeqp'] and check is True
+        _write_qp_db(command[command.index('-o') + 1], eo, [1.1 * e + 0.01 for e in eo])
+
+    _fake_merge_environment(yambowf, monkeypatch, tmp_path, run)
+
+    result = yambowf.merge_QP(orm.List([]), orm.Str('ndb.QP_merged'), orm.Int(1), orm.Dict({}))
+
+    assert result['has_valence'].value and result['has_conduction'].value
+    assert result['QP_db'].filename == 'ndb.QP_fixed'
+
+
+def test_merge_qp_fails_if_yambopy_fails(yambowf, monkeypatch, tmp_path):
+    import subprocess
+
+    from aiida import orm
+
+    def run(command, check):
+        raise subprocess.CalledProcessError(1, command)
+
+    _fake_merge_environment(yambowf, monkeypatch, tmp_path, run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        yambowf.merge_QP(orm.List([]), orm.Str('ndb.QP_merged'), orm.Int(1), orm.Dict({}))
+
+
+def test_qp_splitter_options_are_applied_to_the_qp_manager(yambowf):
+    from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
+
+    manager = YamboInputManager(qp={'parameters': {'arguments': ['gw0'], 'variables': {}}})
+
+    yambowf.set_QP_splitter_options(manager.qp, {'resources': {'num_machines': 2, 'num_mpiprocs_per_machine': 8},
+                                                  'prepend_text': 'module load yambo'})
+
+    assert manager.qp.metadata.options.resources.num_machines == 2
+    assert manager.qp.metadata.options.resources.num_mpiprocs_per_machine == 8
+    assert manager.qp.metadata.options.prepend_text == 'module load yambo'
+    assert manager.bse.metadata.options.prepend_text == ''  # nothing leaks to the BSE step
+
+
+def test_qp_splitter_options_are_optional(yambowf):
+    from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
+
+    manager = YamboInputManager(qp={'parameters': {'arguments': ['gw0'], 'variables': {}}})
+    before = manager.qp.metadata.options.model_dump()
+
+    yambowf.set_QP_splitter_options(manager.qp, {'parallel_runs': 1})
+
+    assert manager.qp.metadata.options.model_dump() == before
+
+
+def test_setup_with_an_empty_parent_starts_from_scratch(yambowf, generate_workchain, ywfl_qp_inputs, aiida_localhost,
+                                                        monkeypatch):
+    from aiida import orm
+
+    parent_folder = orm.RemoteData(computer=aiida_localhost, remote_path='/tmp/empty').store()
+    parent = SimpleNamespace(process_type='aiida.calculations:quantumespresso.pw',
+                             outputs=SimpleNamespace(remote_folder=SimpleNamespace(is_empty=True)))
+    monkeypatch.setattr(yambowf, 'take_calc_from_remote', lambda *args, **kwargs: parent)
+
+    process = generate_workchain(yambowf.YamboWorkflow, {**ywfl_qp_inputs, 'parent_folder': parent_folder})
+    try:
+        process.setup()
+        assert process.ctx.all_calcs_to_do == ['scf', 'nscf', 'qp']
+        assert process.ctx.input_manager.parent_folder is None
+        assert 'calc' not in process.ctx
+    finally:
+        process.close()

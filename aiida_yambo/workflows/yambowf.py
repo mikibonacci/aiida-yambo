@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
 #from curses import meta
-import os
-import time
+import subprocess
 
 from aiida import orm
 from ase import units
@@ -35,6 +34,7 @@ from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
 #### IMPORT THE NEW BASEMODEL MANAGER FOR INPUTS ####
 from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
+from aiida_yambo.utils.high_level_API.general_model import ResourcesModel
 
 def clean(node):
     cleaned_calcs = []
@@ -51,12 +51,15 @@ def clean(node):
     if cleaned_calcs:
         return "cleaned remote folders of calculations: {}".format(', '.join(map(str, cleaned_calcs)))
 
-def sanity_check_QP(v,c,input_db,output_db,create=True):
+def sanity_check_QP(v,c,input_db,output_db,create=True,max_correction_eV=5):
+    """Replace the QP energies whose correction is larger than `max_correction_eV` with a linear fit
+    (valence and conduction separately) of the reliable ones, and align the valence band maximum to zero."""
     d = xarray.open_dataset(input_db,engine='netcdf4')
-    wrong = np.where(abs(d.QP_E[:,0]-d.QP_Eo[:])*units.Ha>5)
+    d.load() # we modify it in place and close the file at the end
+    wrong = np.where(abs(d.QP_E[:,0]-d.QP_Eo[:])*units.Ha>max_correction_eV)
     #v,c = 29,31
-    v_cond = np.where((d.QP_table[0] <= v) & (abs(d.QP_E[:,0]-d.QP_Eo[:])*units.Ha<5))
-    c_cond = np.where((d.QP_table[0] >= c) & (abs(d.QP_E[:,0]-d.QP_Eo[:])*units.Ha<5))
+    v_cond = np.where((d.QP_table[0] <= v) & (abs(d.QP_E[:,0]-d.QP_Eo[:])*units.Ha<max_correction_eV))
+    c_cond = np.where((d.QP_table[0] >= c) & (abs(d.QP_E[:,0]-d.QP_Eo[:])*units.Ha<max_correction_eV))
 
     #fix with a fit
     # a linear fit requires at least 2 points; if the band region is missing we return None for the fit.
@@ -80,6 +83,7 @@ def sanity_check_QP(v,c,input_db,output_db,create=True):
         d.QP_E[:,0] = d.QP_E[:,0] - np.max(d.QP_E[v_cond[0],0])
     
     if create: d.to_netcdf(output_db)
+    d.close()
 
     return output_db,fit_v,fit_c
 
@@ -95,19 +99,14 @@ def valence_conduction_bands(nelectrons, soc):
     return valence, valence + 1
 
 @calcfunction
-def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_db=orm.List([])): #just to have something that works, but it is not correct to proceed this way
+def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_db=None): #just to have something that works, but it is not correct to proceed this way
         ywfl = load_node(ywfl_pk.value)
         pw = find_pw_parent(ywfl)
-        fermi = pw.outputs.output_parameters.get_dict()['fermi_energy']
         SOC = pw.outputs.output_parameters.get_dict()['spin_orbit_calculation']
         nelectrons = pw.outputs.output_parameters.get_dict()['number_of_electrons']
-        kpoints = pw.outputs.output_band.get_kpoints()
-        bands = pw.outputs.output_band.get_bands()
-        nk = pw.outputs.output_parameters.get_dict()['number_of_k_points']
-        qp_rules = qp_settings.get_dict()
 
         valence, conduction = valence_conduction_bands(nelectrons, SOC)
-        string_run = 'yambopy mergeqp'
+        databases = []
         
         # Create temporary directory
         filename='ndb.QP'
@@ -119,20 +118,19 @@ def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_
                 with load_node(i).outputs.QP_db.base.repository.open(filename, 'rb') as handle:
                     temp_file.write_bytes(handle.read())
 
-                string_run+=' '+str(temp_file)
+                databases.append(str(temp_file))
 
-            if len(already_computed_QP_db.get_list())>0:
+            if already_computed_QP_db is not None:
                 for i in already_computed_QP_db.get_list():
                     # Create the file with the desired name
                     temp_file = pathlib.Path(dirpath) / str(i)
                     temp_file.write_bytes(load_node(i).get_content("rb"))
-                    string_run+=' '+str(temp_file)
+                    databases.append(str(temp_file))
             
-            string_run+=' -o '+dirpath+'/'+output_name.value
-            print(string_run)
-            os.system(string_run)
-            time.sleep(10)
-            qp_fixed,fit_v,fit_c = sanity_check_QP(valence,conduction,dirpath+'/'+output_name.value,dirpath+'/'+output_name.value.replace('merged','fixed'))
+            merged = str(pathlib.Path(dirpath) / output_name.value)
+            # NOTE: we wait for the end of the command, and we fail loudly if it fails.
+            subprocess.run(['yambopy', 'mergeqp', *databases, '-o', merged], check=True)
+            qp_fixed,fit_v,fit_c = sanity_check_QP(valence,conduction,merged,str(pathlib.Path(dirpath) / output_name.value.replace('merged','fixed')))
             QP_db = SingleFileData(qp_fixed)
 
             return {
@@ -140,18 +138,13 @@ def merge_QP(filenames_List,output_name,ywfl_pk,qp_settings,already_computed_QP_
                 'has_valence': orm.Bool(fit_v is not None),
                 'has_conduction': orm.Bool(fit_c is not None),
             }
-        
-        return
 
 @calcfunction
 def extend_QP(filenames_List,output_name,ywfl_pk,qp_settings,QP): #just to have something that works, but it is not correct to proceed this way
     ywfl = load_node(ywfl_pk.value)
     pw = find_pw_parent(ywfl)
-    fermi = pw.outputs.output_parameters.get_dict()['fermi_energy']
     SOC = pw.outputs.output_parameters.get_dict()['spin_orbit_calculation']
     nelectrons = pw.outputs.output_parameters.get_dict()['number_of_electrons']
-    kpoints = pw.outputs.output_band.get_kpoints()
-    bands = pw.outputs.output_band.get_bands()
     nk = pw.outputs.output_parameters.get_dict()['number_of_k_points']
     qp_rules = qp_settings.get_dict()
 
@@ -166,17 +159,15 @@ def extend_QP(filenames_List,output_name,ywfl_pk,qp_settings,QP): #just to have 
         qp_fixed,fit_v,fit_c = sanity_check_QP(valence,conduction,output_name,output_name,create=False)
     
         if qp_rules.pop('extend_db', False):
-            """
-            In the qp settings dict, I should add:
-                {
-                    'extend_db':True,
-                    ''T_smearing': 1e-2, #smearing for the FD corrections...see the paper MBonacci et al. Towards HT... 
-                    'consider_only':[v_min,c_max]
-                    'Nb': n, #number of bands to be included in the extended QP db (from 1st to nth)
-                    -->'v_min':, #used to evaluate v_max energy and v_min that you want to compute explicitly
-                    --->'c_max':, #used to evaluate c_min energy and c_max that you want to compute explicilty
-                }
-            """
+            # In the qp settings dict, I should add:
+            #    {
+            #        'extend_db':True,
+            #        'T_smearing': 1e-2, #smearing for the FD corrections...see the paper MBonacci et al. Towards HT... 
+            #        'consider_only':[v_min,c_max]
+            #        'Nb': n, #number of bands to be included in the extended QP db (from 1st to nth)
+            #        -->'v_min':, #used to evaluate v_max energy and v_min that you want to compute explicitly
+            #        --->'c_max':, #used to evaluate c_min energy and c_max that you want to compute explicilty
+            #    }
             qp_rules['Nb'] = qp_rules.pop('Nb', [1, conduction + valence])
             db_FD_scissored = FD_and_scissored_db(out_db_path=qp_fixed,pw=pw,Nb=qp_rules['Nb'],Nk=nk,v_max=min(qp_rules['consider_only']),c_min=max(qp_rules['consider_only']),fit_v=fit_v,
                     fit_c=fit_c,conduction=conduction,T=qp_rules.pop('T_smearing',1e-2))
@@ -184,6 +175,14 @@ def extend_QP(filenames_List,output_name,ywfl_pk,qp_settings,QP): #just to have 
             
             QP_db_extended = SingleFileData(str(output_name).replace('fixed','extended'))
             return QP_db_extended
+
+def set_QP_splitter_options(yambo_manager, QP_subsets_dict):
+    """Set on the splitted QP runs the `resources` and `prepend_text` requested in `QP_subsets_dict`."""
+    options = yambo_manager.metadata.options
+    if 'resources' in QP_subsets_dict:
+        options.resources = ResourcesModel(**QP_subsets_dict['resources'])
+    if 'prepend_text' in QP_subsets_dict:
+        options.prepend_text = QP_subsets_dict['prepend_text']
 
 def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1,max_iterations=30):
     pw = find_pw_parent(ywfl)
@@ -437,7 +436,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         spec.exit_code(300, 'ERROR_WORKCHAIN_FAILED',
                              message='The workchain failed with an unrecoverable error.')
         spec.exit_code(301, 'ERROR_SPLITTED_QP_FAILED',
-                             message='The workchain failed with an unrecoverable error.')
+                             message='At least one of the splitted QP calculations failed.')
         spec.exit_code(302, 'ERROR_MISSING_BAND_REGION',
                              message='The merged QP database does not contain both valence and conduction states.')
         spec.exit_code(303, 'ERROR_METALLIC_SYSTEM',
@@ -676,12 +675,13 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             if parent.process_type=='aiida.workflows:quantumespresso.pw.base':
                 parent = parent.outputs.remote_folder.creator
             
-            # empty parent, we need to recompute it.
             if parent.outputs.remote_folder.is_empty:
+                # empty parent, we need to recompute it: we keep all the calculations to do.
                 self.report('The parent remote folder is empty, we start from scratch.')
+                self.ctx.input_manager.remove_parent_folder()
 
             # pw parent
-            if 'quantumespresso.pw' in parent.process_type:
+            elif 'quantumespresso.pw' in parent.process_type:
                 parent_params = parent.inputs.parameters.get_dict()
                 calc_type = parent_params['CONTROL']['calculation']
                 if calc_type in ['scf','relax','vc-relax']:
@@ -689,15 +689,16 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 elif calc_type in ['nscf']:
                     self.ctx.all_calcs_to_do.remove('scf')
                     self.ctx.all_calcs_to_do.remove('nscf')
+                self.ctx.calc = parent
 
             # yambo parent
             elif parent.process_type=='aiida.calculations:yambo.yambo':
                 self.ctx.all_calcs_to_do.remove('scf')
                 self.ctx.all_calcs_to_do.remove('nscf')
+                self.ctx.calc = parent
             else:
                 self.report('no valid input calculations, so we will start from scratch')
-            
-            self.ctx.calc = parent
+                self.ctx.calc = parent
             
         # check nbnd and overall NSCF validity (beyond nbnd, also kpoints/structure/pseudos/ecut)
         # has_enough_nbnd is the fast nbnd-only gate; is_nscf_valid does the full check
@@ -883,10 +884,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 if 'parallelism' in self.ctx.input_manager.QP_subsets_dict:
                     for k,v in self.ctx.input_manager.QP_subsets_dict['parallelism'].items():
                         self.ctx.input_manager.qp.set_variable(name=k, value=v)
-                if 'resources' in self.ctx.input_manager.QP_subsets_dict:
-                    self.ctx.input_manager.metadata.options.resources = self.ctx.input_manager.QP_subsets_dict['resources']
-                if 'prepend_text' in self.ctx.input_manager.QP_subsets_dict:
-                    self.ctx.input_manager.metadata.options.prepend_text = self.ctx.input_manager.QP_subsets_dict['prepend_text']
+                set_QP_splitter_options(self.ctx.input_manager.qp, self.ctx.input_manager.QP_subsets_dict)
                 
 
                 self.ctx.input_manager.clean_workdir = True # AAA: we do not set orm.Bool(True), as the generate_AiiDA_inputs will create the AiiDA nodes needed: otherwise, it will be in the ctx, but not stored: it will except.
