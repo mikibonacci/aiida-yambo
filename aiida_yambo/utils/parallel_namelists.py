@@ -1,20 +1,5 @@
 # -*- coding: utf-8 -*-
 """helpers for many purposes"""
-from __future__ import absolute_import
-import numpy as np
-from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt, style
-import pandas as pd
-import copy
-import os
-
-try:
-    from aiida.orm import Dict, Str, List, load_node, KpointsData, RemoteData
-    from aiida.plugins import CalculationFactory, DataFactory
-    from aiida.engine import calcfunction 
-except:
-    pass
-
 namelists = {'4.5':{'DIP':'_','X':'_','SE':'_'},
              '4.1':{'DIP':'_','X':'_and_IO_','SE':'_'},
              '5.x':{'DIP':'_','X':'_and_IO_','SE':'_'},
