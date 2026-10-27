@@ -90,5 +90,6 @@ nav:
       - Overview: reference/index.md
       - Workflows: reference/workflows.md
       - Outputs and parsed quantities: reference/outputs.md
+      - Options and exit codes: reference/options-and-exit-codes.md
       - Internal calculation layers: reference/internal-layers.md
       - Changelog: https://github.com/yambo-code/yambo-aiida/releases

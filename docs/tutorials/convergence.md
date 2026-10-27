@@ -48,11 +48,16 @@ The `start`, `stop`, and `delta` values define the initial grid. `max` prevents 
 
 ```python
 import pandas as pd
-infos = run.outputs.infos.get_dict()
-history = pd.DataFrame(run.outputs.history.get_dict())
-converged = history[history['useful'] == True]
-print(infos)
+summary = run.outputs.convergence_summary.get_dict()   # converged values, per parameter group
+story = pd.DataFrame(run.outputs.collection.get_dict()['story'])  # one row per calculation
+converged = story[story['converged'] == True]
+print(summary)
 print(converged[['parameters_studied', 'gap_']])
 ```
+
+`story` also has the `failed` and `useful` flags and the value of every converged variable for each calculation.
+The outputs of the last calculation (for example `output_ywfl_parameters`) are exposed by the convergence workflow too.
+If the convergence cannot be completed (for example the space is too small), `collection` and `convergence_summary`
+are still returned, so you can see what was computed; see [Options and exit codes](../reference/options-and-exit-codes.md).
 
 Use `heavy` when the final calculation should already contain converged values, and `cheap` for less expensive intermediate trials.

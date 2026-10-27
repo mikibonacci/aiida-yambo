@@ -8,8 +8,8 @@ Common workflow outputs include:
 | `array_ndb` | Arrays parsed from YAMBO databases such as QP corrections |
 | `bands_quasiparticle` | Quasiparticle band structure |
 | `array_chi` | BSE absorption/loss spectrum arrays |
-| `history` | Full convergence history from `YamboConvergence` |
-| `infos` | Converged parameters and convergence summary |
+| `collection` | `YamboConvergence`: `story` (one record per calculation: variables, parsed quantities, `failed`, `useful`, `converged`) and the `workflows` pks/uuids |
+| `convergence_summary` | `YamboConvergence`: converged values and details for each parameter group (or `scan` details for a scan) |
 
 ```python
 parameters = run.outputs.output_ywfl_parameters.get_dict()
