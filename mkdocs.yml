@@ -85,6 +85,7 @@ nav:
       - Overview: how-to/index.md
       - Recipes and troubleshooting: how-to/recipes.md
       - Parallelism and restarts: how-to/parallelism.md
+      - Scan values and choose fits: how-to/convergence-scan-and-fits.md
   - Reference:
       - Overview: reference/index.md
       - Workflows: reference/workflows.md
