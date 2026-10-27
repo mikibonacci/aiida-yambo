@@ -1,13 +1,10 @@
-from __future__ import absolute_import
+import copy
+import logging
 
 import numpy as np
-from scipy import optimize
 from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt, style
-import pandas as pd
-import copy
-from ase import Atoms
-from aiida_yambo.utils.common_helpers import *
+
+LOGGER = logging.getLogger(__name__)
 
 
 def create_grid(edges=None, delta=None, alpha=0.25, add=None, var=None, shift=None):
@@ -103,10 +100,10 @@ class The_Predictor_2D():
         else:
             try:
                 self.bb_Ry = copy.deepcopy(self.bande[0,np.array(self.result.BndsRnXp.values,dtype='int64')-1]/13.6)
-            except:
+            except (IndexError, TypeError, AttributeError, KeyError): # not a bands convergence
                 try:
                     self.bb_Ry = copy.deepcopy(self.bande[0,-1]/13.6)
-                except:
+                except (IndexError, TypeError):
                     self.bb_Ry = 0
             
         # Apply Fermi offset to the result array as well
@@ -114,7 +111,7 @@ class The_Predictor_2D():
         
         #self.G = copy.deepcopy(self.G)
         
-        print('Params',self.parameters)
+        LOGGER.debug('Params %s', self.parameters)
         
     
     def plot_scatter_contour_2D(self,fig,ax,
@@ -157,8 +154,8 @@ class The_Predictor_2D():
                 ax2.set_xbound(ax.get_xbound())
                 ax2.set_xticklabels(l__[::3],fontdict={'size':20})
                 ax2.set_xlabel('KS states (Ry)',fontdict={'size':20})
-            except:
-                pass
+            except Exception as exc: # plotting only: the secondary axis of the plot is missing
+                LOGGER.debug('no secondary axis in the plot: %s', exc)
         
         if bar:
                 cmap = fig.colorbar(scatter, shrink=0.5, aspect=7, pad=0.01)
@@ -176,12 +173,12 @@ class The_Predictor_2D():
         fxy = lambda x,a,c: -alpha*a/(x[0]**(alpha+1))*( -beta*c/x[1]**(beta+1))
          
         xdata,ydata = np.array((self.parameters[0,:],self.parameters[1,:])),self.r[:]
-        print('fitting all simulations.')
+        LOGGER.debug('fitting all simulations.')
         
-        print(np.shape(1/(xdata[0]*xdata[1])))
+        LOGGER.debug(np.shape(1/(xdata[0]*xdata[1])))
         # Need at least as many points as parameters (4) for a stable fit
         if len(ydata) < 4:
-            print(f"Not enough data points ({len(ydata)}) for 2D fit (need >=4), skipping fit")
+            LOGGER.warning(f"Not enough data points ({len(ydata)}) for 2D fit (need >=4), skipping fit")
             return False
             
         popt,pcov = curve_fit(f,xdata=xdata,
@@ -235,8 +232,8 @@ class The_Predictor_2D():
         self.old_Y_fit =self.Y_fit
         self.old_Z_fit =self.Z_fit
         
-        print(self.Zx_fit)
-        print(self.X_fit[self.condition_conv_calc])
+        LOGGER.debug(self.Zx_fit)
+        LOGGER.debug(self.X_fit[self.condition_conv_calc])
         if len(self.X_fit[self.condition_conv_calc]) == 0 : return False
         if not b: b = max(max(xdata[0]),self.X_fit[self.condition_conv_calc][0]*1.25)
         if not g: g = max(max(xdata[1]),self.Y_fit[self.condition_conv_calc][0]*1.25)
@@ -247,7 +244,7 @@ class The_Predictor_2D():
         p_H = f(np.array((b,g)),popt[0],popt[1],popt[2],popt[3])
         try:
             l = ydata[np.where((xdata[0] == max(xdata[0])) & (xdata[1] == max(xdata[1])))][0]
-        except:
+        except (IndexError, TypeError):
             l = ydata[-1]
         
         #print('extra={} eV, \nlast calculation={} eV \nlast calculation from fit={} eV'.format(round(popt[3]*popt[1],3),
@@ -275,12 +272,13 @@ class The_Predictor_2D():
     
 
     def determine_next_calculation(self,
-                                   overconverged_values=[],
+                                   overconverged_values=None,
                                    plot=False,
                                    colormap='gist_rainbow_r',
                                    reference = None,save=False):
         
-        print('last point:{} eV'.format(self.Z_fit[-1,-1]))
+        overconverged_values = [] if overconverged_values is None else overconverged_values
+        LOGGER.debug('last point:{} eV'.format(self.Z_fit[-1,-1]))
         
         if reference == 'extra':
             reference = self.extra
@@ -331,13 +329,14 @@ class The_Predictor_2D():
             self.next_step['GbndRnge'] = copy.deepcopy(self.next_step['BndsRnXp'])
         
         self.next_step['E_ref'] = reference
-        print(self.next_step)
+        LOGGER.debug(self.next_step)
 
         return self.next_step
     
-    def check_the_point(self,old_hints={}):
+    def check_the_point(self,old_hints=None):
         # Guard against missing keys (e.g. first grid after FIFO reset where
         # old_hints only contains {'new_grid': True}). Treat as not reached.
+        old_hints = {} if old_hints is None else old_hints
         if self.what not in old_hints or self.var_[0] not in old_hints or self.var_[1] not in old_hints:
             self.point_reached = False
             self.old_discrepancy = np.inf
@@ -350,13 +349,13 @@ class The_Predictor_2D():
         self.index = [int(self.result[(self.result[self.var_[0]]==old_hints[self.var_[0]]) & \
             (self.result[self.var_[1]]==old_hints[self.var_[1]])].index.values[0])]
 
-        print('Discrepancy with old prediction: {} eV'.format(self.old_discrepancy))
+        LOGGER.debug('Discrepancy with old prediction: {} eV'.format(self.old_discrepancy))
             
         if old_hints[self.var_[0]] == self.next_step[self.var_[0]] and old_hints[self.var_[1]] == self.next_step[self.var_[1]]:
             self.point_reached = True
         else:
             self.point_reached = False
-            print('new point predicted.')
+            LOGGER.debug('new point predicted.')
         
 
         explicit_gw_result=self.result[(self.result[self.var_[0]]==old_hints[self.var_[0]]) & \
@@ -365,8 +364,9 @@ class The_Predictor_2D():
         return explicit_gw_result
     
     
-    def analyse(self,old_hints={},reference = None, plot= False,save_fit=False,save_next = False,colormap='viridis',thr_fx=5e-5,thr_fy=5e-5,thr_fxy=1e-8):
+    def analyse(self,old_hints=None,reference = None, plot= False,save_fit=False,save_next = False,colormap='viridis',thr_fx=5e-5,thr_fy=5e-5,thr_fxy=1e-8):
         
+        old_hints = {} if old_hints is None else old_hints
         self.check_passed = True
         error = 10
         ii, jj = 1, 1
@@ -374,13 +374,13 @@ class The_Predictor_2D():
         power_laws = [1,2]
         for i in power_laws:
             for j in power_laws:
-                print(i,j)
+                LOGGER.debug('%s %s', i, j)
                 self.fit_space_2D(fit=True,alpha=i,beta=j,plot=False,dim=10, colormap='viridis',reference=reference,thr_fx=thr_fx,thr_fy=thr_fy,thr_fxy=thr_fxy)
                 if hasattr(self, 'MAE_fit') and self.MAE_fit<error:
                     ii,jj = i,j
                     error = self.MAE_fit
 
-        print('\nBest power laws: {}, {}\n'.format(ii,jj))            
+        LOGGER.debug('\nBest power laws: {}, {}\n'.format(ii,jj))            
         
         self.check_passed = self.fit_space_2D(fit=True,alpha=ii,beta=jj,verbose=False,plot=plot,save=save_fit,colormap=colormap,reference=reference,thr_fx=thr_fx,thr_fy=thr_fy,thr_fxy=thr_fxy)
         
