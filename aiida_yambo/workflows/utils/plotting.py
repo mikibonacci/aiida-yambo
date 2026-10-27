@@ -1,25 +1,22 @@
-#!/usr/bin/env runaiida
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import
-from __future__ import print_function
-import sys
-import os
-import shutil
+import logging
+
 import matplotlib
-from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
+
 from aiida.orm import load_node
-from aiida_yambo.utils.common_helpers import*
 from aiida.orm.nodes.process.workflow.workchain import WorkChainNode
+
+LOGGER = logging.getLogger(__name__)
 
 
 ###### PLOT ######
 
-def plot_1D_convergence(ax, history, title='',where=['gap_at_Gamma_eV'],\
-              units={'NGsBlkXp':'(Ry)','kpointsmesh':' (mesh)'}):
+def plot_1D_convergence(ax, history, title='',where=None,\
+              units=None):
 
+    where = ['gap_at_Gamma_eV'] if where is None else where
+    units = {'NGsBlkXp':'(Ry)','kpointsmesh':' (mesh)'} if units is None else units
     colors = list(matplotlib.colors.TABLEAU_COLORS.items())
     
     if isinstance(history,WorkChainNode):
@@ -56,7 +53,7 @@ def plot_1D_convergence(ax, history, title='',where=['gap_at_Gamma_eV'],\
     
     try:
         tot = tot[tot['failed']==False]    
-    except:
+    except KeyError: # no information on the failed calculations
         pass  
     
     conv = tot[tot['useful']==True]
@@ -75,12 +72,12 @@ def plot_1D_convergence(ax, history, title='',where=['gap_at_Gamma_eV'],\
             unit=''
             try:
                 for iy in i:
-                    print(i)
+                    LOGGER.debug(i)
                     unit += units[iy]
-            except:
+            except (KeyError, TypeError, IndexError):
                 unit = ''
             color = colors[len(b)+1][0]
-            print(color)
+            LOGGER.debug(color)
             val = conv[i].values[-1][0]
             if isinstance(val,dict):
                 val = list(val.values())
@@ -102,8 +99,9 @@ def plot_1D_convergence(ax, history, title='',where=['gap_at_Gamma_eV'],\
                         'o-',label=label, color=color)
             b.append(i)
 
-def plot_2D_convergence(ax, xdata=None, ydata=None, zdata=None, parameters = {'x':'bands','y':'G-vecs (Ry)'}, plot_type='3D'):      
+def plot_2D_convergence(ax, xdata=None, ydata=None, zdata=None, parameters = None, plot_type='3D'):      
 
+    parameters = {'x':'bands','y':'G-vecs (Ry)'} if parameters is None else parameters
     if not isinstance(xdata, np.ndarray):
         raise TypeError('xdata has to be numpy.ndarray')
     if not isinstance(ydata, np.ndarray):
