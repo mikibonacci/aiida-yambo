@@ -1,0 +1,179 @@
+{
+ "bands_power1": {
+  "check_single_point": true,
+  "hints": {
+   "BndsRnXp": 200,
+   "E_ref": 3.0125,
+   "already_computed": true,
+   "gap_": 3.025,
+   "new_grid": false
+  },
+  "inquired_point": 200,
+  "new_grid": false,
+  "status": "CONVERGED"
+ },
+ "coupled_power1": {
+  "check_single_point": true,
+  "hints": {
+   "BndsRnXp": 700.0,
+   "E_ref": 2.026066,
+   "NGsBlkXp": 2.0,
+   "already_computed": false,
+   "gap_": 2.048857,
+   "new_grid": false
+  },
+  "inquired_point": [
+   700.0,
+   2.0
+  ],
+  "new_grid": false,
+  "status": "CONTINUE"
+ },
+ "coupled_power2": {
+  "check_single_point": true,
+  "hints": {
+   "BndsRnXp": 1000.0,
+   "E_ref": 2.00045,
+   "NGsBlkXp": 4.0,
+   "already_computed": false,
+   "gap_": 2.025405,
+   "new_grid": false
+  },
+  "inquired_point": [
+   1000.0,
+   4.0
+  ],
+  "new_grid": false,
+  "status": "CONTINUE"
+ },
+ "coupled_unconverged": {
+  "check_single_point": false,
+  "hints": {
+   "new_grid": true
+  },
+  "inquired_point": null,
+  "new_grid": true,
+  "status": "CONTINUE"
+ },
+ "fft_power1": {
+  "check_single_point": true,
+  "hints": {
+   "E_ref": 5.005,
+   "FFTGvecs": 10,
+   "already_computed": true,
+   "gap_": 5.05,
+   "new_grid": false
+  },
+  "inquired_point": 10,
+  "new_grid": false,
+  "status": "CONVERGED"
+ },
+ "fft_power2": {
+  "check_single_point": true,
+  "hints": {
+   "E_ref": 5.001389,
+   "FFTGvecs": 10,
+   "already_computed": true,
+   "gap_": 5.05,
+   "new_grid": false
+  },
+  "inquired_point": 10,
+  "new_grid": false,
+  "status": "CONVERGED"
+ },
+ "fft_power3_noise": {
+  "check_single_point": true,
+  "hints": {
+   "E_ref": 5.000806,
+   "FFTGvecs": 15,
+   "already_computed": true,
+   "gap_": 5.029636,
+   "new_grid": false
+  },
+  "inquired_point": 15,
+  "new_grid": false,
+  "status": "CONVERGED"
+ },
+ "fft_second_pass": {
+  "check_single_point": true,
+  "hints": {
+   "E_ref": 5.004762,
+   "FFTGvecs": 10,
+   "already_computed": true,
+   "gap_": 5.05,
+   "new_grid": false
+  },
+  "inquired_point": 10,
+  "new_grid": false,
+  "status": "CONVERGED"
+ },
+ "fft_tight_threshold": {
+  "check_single_point": false,
+  "hints": {
+   "E_ref": 5.005,
+   "FFTGvecs": 95,
+   "already_computed": false,
+   "gap_": 5.005263,
+   "new_grid": true
+  },
+  "inquired_point": null,
+  "new_grid": true,
+  "status": "CONTINUE"
+ },
+ "fft_unconverged": {
+  "check_single_point": false,
+  "hints": {
+   "new_grid": true
+  },
+  "inquired_point": null,
+  "new_grid": true,
+  "status": "CONTINUE"
+ },
+ "fft_wide_threshold": {
+  "check_single_point": true,
+  "hints": {
+   "E_ref": 5.005,
+   "FFTGvecs": 10,
+   "already_computed": true,
+   "gap_": 5.05,
+   "new_grid": false
+  },
+  "inquired_point": 10,
+  "new_grid": false,
+  "status": "CONVERGED"
+ },
+ "kdensity": {
+  "check_single_point": true,
+  "hints": {
+   "E_ref": 4.00489,
+   "already_computed": false,
+   "gap_": 4.044944,
+   "kpoint_density": 0.447954,
+   "new_grid": false
+  },
+  "inquired_point": 0.447954,
+  "new_grid": false,
+  "status": "CONTINUE"
+ },
+ "kmesh": {
+  "check_single_point": true,
+  "hints": {
+   "E_ref": 4.02,
+   "already_computed": true,
+   "gap_": 4.039062,
+   "kpoint_mesh": [
+    8,
+    8,
+    8
+   ],
+   "new_grid": false
+  },
+  "inquired_point": [
+   8,
+   8,
+   8
+  ],
+  "new_grid": false,
+  "status": "CONVERGED"
+ }
+}
