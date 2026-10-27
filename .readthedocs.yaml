@@ -6,13 +6,12 @@ build:
     python: "3.11"
 
 python:
-    install:
-        - method: pip
-          path: .
-          extra_requirements:
-            - docs
+  install:
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs
 
-# Let the build fail if there are any warnings
-sphinx:
-    builder: html
-    fail_on_warning: false
+mkdocs:
+  configuration: mkdocs.yml
+  fail_on_warning: false
