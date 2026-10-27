@@ -1,21 +1,18 @@
 # -*- coding: utf-8 -*-
 """helpers for many purposes"""
-from __future__ import absolute_import
-import numpy as np
-from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt, style
-import pandas as pd
 import copy
+import logging
 import os
 
-try:
-    from aiida.orm import Dict, Str, List, load_node, KpointsData, RemoteData, Group
-    from aiida.plugins import CalculationFactory, DataFactory
-    from aiida.engine import calcfunction 
-except:
-    pass
+import numpy as np
 
-from aiida_yambo.utils.k_path_utils import * 
+from aiida.common.exceptions import NotExistent
+from aiida.engine import calcfunction
+from aiida.orm import Dict, KpointsData, List, RemoteData, load_node
+
+from aiida_yambo.utils.k_path_utils import k_path_dealer
+
+LOGGER = logging.getLogger(__name__)
 
 def find_parent(calc):
 
@@ -27,8 +24,9 @@ def find_parent(calc):
         raise Exception('No creator found for parent_folder {}'.format(parent_calc))
     return parent_calc
 
-def find_pw_parent(parent_calc, calc_type = ['scf', 'nscf']):
+def find_pw_parent(parent_calc, calc_type = None):
 
+    calc_type = ['scf', 'nscf'] if calc_type is None else calc_type
     has_found_pw = False
     tentatives=0
     while (not has_found_pw):
@@ -46,7 +44,7 @@ def find_pw_parent(parent_calc, calc_type = ['scf', 'nscf']):
         else:
             parent_calc = find_parent(parent_calc)
         if tentatives==10000: 
-            print('too much tentatives to find the parent')
+            LOGGER.debug('too much tentatives to find the parent')
             break
 
     return parent_calc
@@ -55,15 +53,16 @@ def old_find_parent(calc):
 
     try:
         parent_calc = calc.inputs.parent_folder.get_incoming().all_nodes()[-1] #to load the node from a workchain...
-    except:
+    except IndexError:
         try:
             parent_calc = calc.inputs.parent_folder.get_incoming().get_node_by_label('remote_folder')
-        except:
+        except NotExistent:
             parent_calc = calc.called[0] #nscf_workchain...??
     return parent_calc
 
-def old_find_pw_parent(parent_calc, calc_type = ['scf', 'nscf']):
+def old_find_pw_parent(parent_calc, calc_type = None):
 
+    calc_type = ['scf', 'nscf'] if calc_type is None else calc_type
     has_found_pw = False
     while (not has_found_pw):
         if parent_calc.process_type=='aiida.calculations:yambo.yambo' or parent_calc.process_type=='aiida.workflows:yambo.yambo.yambowf':
@@ -92,22 +91,22 @@ def old_find_pw_parent(parent_calc, calc_type = ['scf', 'nscf']):
 
 def get_distance_from_kmesh(calc):
     mesh = calc.inputs.kpoints.get_kpoints_mesh()[0]
-    print(mesh)
+    LOGGER.debug(mesh)
     k = KpointsData()
     k.set_cell_from_structure(calc.inputs.structure) #these take trace of PBC...if set in the inputs.!!
     for i in range(4,400):
          k.set_kpoints_mesh_from_density(1/(i*0.25))
-         print(k.get_kpoints_mesh()[0])
+         LOGGER.debug(k.get_kpoints_mesh()[0])
          if k.get_kpoints_mesh()[0]==mesh:
-             print('ok, {} is the density'.format(i*0.25))
-             print(k.get_kpoints_mesh()[0],mesh)
+             LOGGER.debug('ok, {} is the density'.format(i*0.25))
+             LOGGER.debug('%s %s', k.get_kpoints_mesh()[0], mesh)
              return i*0.25
          else: #try the same algorithm but using force_parity=True.
             k.set_kpoints_mesh_from_density(1/(i*0.25),force_parity=True)
-            print(k.get_kpoints_mesh()[0])
+            LOGGER.debug(k.get_kpoints_mesh()[0])
             if k.get_kpoints_mesh()[0]==mesh:
-                print('ok, {} is the density'.format(i*0.25))
-                print(k.get_kpoints_mesh()[0],mesh)
+                LOGGER.debug('ok, {} is the density'.format(i*0.25))
+                LOGGER.debug('%s %s', k.get_kpoints_mesh()[0], mesh)
                 return i*0.25 
 
 def find_pw_type(calc):
@@ -131,7 +130,8 @@ def find_table_ind(kpoint,band,_array_ndb):
             return(i)
 
 
-def update_dict(_dict, whats, hows, sublevel=None, pop_list=[]):
+def update_dict(_dict, whats, hows, sublevel=None, pop_list=None):
+    pop_list = [] if pop_list is None else pop_list
     if sublevel:
         if not isinstance(whats, list):
             whats = [whats]
@@ -217,7 +217,7 @@ def take_calc_from_remote(parent_folder,level=0):
         try:
             parent_calc = parent_folder.creator
             #parent_calc = parent_folder.get_incoming().all_nodes()[level] #to load the node from a workchain...
-        except:
+        except Exception:
             parent_calc = parent_folder.get_incoming(link_label_filter='remote_folder').one().node
         return parent_calc
     
@@ -233,22 +233,22 @@ def get_pw_inputs_builders(parent_folder):
         if scf_parent.caller:
             builder_scf=scf_parent.caller.get_builder_restart()
         else:
-            print('SCF parent PwBaseWorkChain not found')
+            LOGGER.info('SCF parent PwBaseWorkChain not found')
             scf_parent=None
-    except:
+    except Exception as exc:
         scf_parent=None
-        print('SCF parent not found')
+        LOGGER.info('SCF parent not found: %s', exc)
     ## NSCF:
     try:
         nscf_parent = find_pw_parent(parent_calc, calc_type=['nscf'])
         if nscf_parent.caller:
             builder_nscf=nscf_parent.caller.get_builder_restart()
         else:
-            print('SCF parent PwBaseWorkChain not found')
+            LOGGER.info('SCF parent PwBaseWorkChain not found')
             nscf_parent=None
-    except:
+    except Exception as exc:
         nscf_parent=None
-        print('NSCF parent not found')
+        LOGGER.info('NSCF parent not found: %s', exc)
         
     return builder_scf, builder_nscf
 
@@ -261,7 +261,7 @@ def take_fermi(calc_node_pk):  # calc_node_pk = node_conv_wfl.outputs.last_calcu
             file = open(path_folder+i,'r')
     for line in file:
         if '[X]Fermi Level' in line:
-            print('The Fermi level is {}'.format(line.split()[3]))
+            LOGGER.info('The Fermi level is {}'.format(line.split()[3]))
             ef = float(line.split()[3])
 
     return ef
@@ -276,7 +276,7 @@ def take_filled_states(calc_node_pk):  # calc_node_pk = node_conv_wfl.outputs.la
             file = open(path_folder+i,'r')
     for line in file:
         if  get_line:
-            print('The VBM {}'.format(line.split()[0]))
+            LOGGER.debug('The VBM {}'.format(line.split()[0]))
             valence = int(line.split()[0].replace('0001-',''))
             return valence
         if '[X]States summary ' in line:
@@ -293,7 +293,7 @@ def take_number_kpts(calc_node_pk):  # calc_node_pk = node_conv_wfl.outputs.last
             file = open(path_folder+i,'r')
     for line in file:
         if 'K-points' in line:
-            print('# of kpts is {}'.format(line.split()[2]))
+            LOGGER.debug('# of kpts is {}'.format(line.split()[2]))
             kpts = int(line.split()[2])
             return kpts
     
@@ -346,7 +346,7 @@ def find_gw_info(inputs):
         for i in parameters['variables']['QPkrange'][0]:
             qp += (1 + i[1]-i[0])*(1 + i[3]-i[2])
             last_qp = max(i[3],last_qp)
-    except:
+    except (KeyError, IndexError, TypeError): # no (valid) QPkrange
         pass
 
     ## runlevels ##
@@ -374,7 +374,7 @@ def build_list_QPkrange(mapping, quantity, nscf_pk, bands, fermi, valence):
                 if not quantity[-1] in maps.keys() or not quantity[-2] in maps.keys(): return quantity, 0
                 if mapping['dft_predicted']=='metal':
                     valence = understand_valence_metal_wise(bands, fermi, maps[quantity[-2]],valence)
-                    print(valence)
+                    LOGGER.info(valence)
                     conduction = understand_valence_metal_wise(bands, fermi, maps[quantity[-1]],valence) + 1 + 1*(int(mapping['soc'])-int(mapping['magnetic_calculation']))
                 else:
                     valence = mapping['valence']
@@ -436,8 +436,9 @@ def build_list_QPkrange(mapping, quantity, nscf_pk, bands, fermi, valence):
     else:
         return 0, 0
 
-def gap_mapping_from_nscf(nscf_pk, additional_parsing_List=[]):
+def gap_mapping_from_nscf(nscf_pk, additional_parsing_List=None):
     #print('START')
+    additional_parsing_List = [] if additional_parsing_List is None else additional_parsing_List
     s_res = False
     nscf = load_node(nscf_pk)
     bands = nscf.outputs.output_band.get_array('bands')
@@ -456,14 +457,14 @@ def gap_mapping_from_nscf(nscf_pk, additional_parsing_List=[]):
         try:
             nscf.inputs.pw__structure.get.ase()
             #print('HERE0')
-        except:
+        except Exception:
             nscf.inputs.structure.get.ase()
             #print('HERE1')
         cell = structure.get_cell()
         k = cell.bandpath()
         high_symmetry = k.special_points
         #print('HERE2')
-    except:
+    except Exception: # NOTE: this always fails for now ('structure' is not defined above)
         high_symmetry = []
         #print('HERE3')
     if valence%2 != 0:
@@ -480,7 +481,7 @@ def gap_mapping_from_nscf(nscf_pk, additional_parsing_List=[]):
     touch_fermi_C = bands[:,valence]-fermi
     above_fermi = np.where(touch_fermi>0)[0]
     below_fermi = np.where(touch_fermi<=0)[0]
-    print(len(above_fermi),len(below_fermi))
+    LOGGER.info('%s %s', len(above_fermi), len(below_fermi))
 
     ind_val = bands[:,valence-1].argmax()
     ind_cond = bands[:,conduction-1].argmin()
@@ -774,7 +775,7 @@ def check_same_pw(node, k_mesh_to_calc, already_done, bands = None, input_manage
                         if enough_b:
                             parent_nscf = node.pk      
  
-                except:
+                except (AttributeError, KeyError): # no retrieved/remote folder
                     pass
             if parent_nscf_try is not None and same_k and parent_nscf_try.is_finished_ok and not parent_nscf_try.outputs.remote_folder.is_empty: 
                 if enough_b:
@@ -783,8 +784,8 @@ def check_same_pw(node, k_mesh_to_calc, already_done, bands = None, input_manage
                 if enough_b:
                     parent_scf = parent_scf_try.pk 
     
-    except:
-        pass
+    except Exception as exc: # no PW calculations in this node
+        LOGGER.debug('no usable parent in node %s: %s', getattr(node, 'pk', None), exc)
     
     return parent_nscf, parent_scf   
 
