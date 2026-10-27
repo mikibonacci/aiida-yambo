@@ -1,5 +1,8 @@
+import logging
 import numpy as np
 from scipy.optimize import curve_fit
+
+LOGGER = logging.getLogger(__name__)
 
 '''
 author: Andrea Ferretti
@@ -23,13 +26,13 @@ def fitting(func, xdata,ydata, p0=None,method=None,weights=None):
    try:
       params, pcov = curve_fit(func,xdata,ydata,p0=p0,method=None,sigma=weights)
    except ValueError:
-      print("ValueError: Invalid input data")
+      LOGGER.warning("ValueError: Invalid input data")
       info=-1
    except RuntimeError:
-      print("RuntimeError: LeastSquares fitting failed")
+      LOGGER.warning("RuntimeError: LeastSquares fitting failed")
       info=-2
-   except:
-      print("Unexpected error")
+   except Exception as exc:
+      LOGGER.warning("Unexpected error: %s", exc)
       info=-3
    else:
       info=pcov.trace()
@@ -40,9 +43,9 @@ def fitting(func, xdata,ydata, p0=None,method=None,weights=None):
    #
    rms=np.mean((ydata-func(xdata, *params))**2)
    #
-   print("Fitting PARAMS: ",params)
-   print("Fitting   RMS : ",rms)
-   print("Fitting EXTRAP: ",val_inf)
+   LOGGER.debug('Fitting PARAMS: %s', params)
+   LOGGER.debug('Fitting   RMS : %s', rms)
+   LOGGER.debug('Fitting EXTRAP: %s', val_inf)
    
    return params, rms, val_inf
 
