@@ -23,20 +23,6 @@ def test_yamboworkflow_setup_ctx_survives_checkpoint(generate_workchain, ywfl_qp
         process.close()
 
 
-@pytest.fixture
-def yc_inputs(ywfl_qp_inputs):
-    from aiida import orm
-    from aiida_yambo.workflows.utils.parameters import ConvParam, create_parameter_space_inputs
-
-    space = [ConvParam('FFTGvecs', start=10, stop=25, delta=5, max=40, units='Ry', conv_thr=0.5, steps=4)]
-    return {
-        'ywfl': ywfl_qp_inputs,
-        'parameters_space': orm.List(create_parameter_space_inputs(space)),
-        'workflow_settings': orm.Dict({'type': 'heavy', 'what': ['gap_']}),
-        'group_label': orm.Str('test_checkpoint_group'),
-    }
-
-
 def test_yamboconvergence_setup_ctx_survives_checkpoint(generate_workchain, yc_inputs):
     from aiida_yambo.workflows.yamboconvergence import YamboConvergence
 

@@ -104,3 +104,17 @@ def ywfl_qp_inputs(yambo_code, pw_inputs):
             },
         },
     }
+
+
+@pytest.fixture
+def yc_inputs(ywfl_qp_inputs):
+    from aiida import orm
+    from aiida_yambo.workflows.utils.parameters import ConvParam, create_parameter_space_inputs
+
+    space = [ConvParam('FFTGvecs', start=10, stop=25, delta=5, max=40, units='Ry', conv_thr=0.5, steps=4)]
+    return {
+        'ywfl': ywfl_qp_inputs,
+        'parameters_space': orm.List(create_parameter_space_inputs(space)),
+        'workflow_settings': orm.Dict({'type': 'heavy', 'what': ['gap_']}),
+        'group_label': orm.Str('test_checkpoint_group'),
+    }

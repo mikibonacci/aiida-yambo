@@ -504,41 +504,29 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             self.report('We should finish the set of calculations before the analysis.')
             return True
         
+        # NOTE: this is a predicate: it must not modify the state (it can be evaluated again when
+        # the workchain is reloaded from a checkpoint). The iteration counter is advanced in update_next_step.
+
         #failed cases
-        elif not self.ctx.current_convergence.success and self.ctx.current_convergence.iterations_exceeded:
+        if not self.ctx.current_convergence.success and self.ctx.current_convergence.iterations_exceeded:
             self.report('Workflow failed due to max restarts exceeded for variable {}'.format(self.ctx.current_convergence.parameters.var))
             return False
-        elif self.ctx.current_convergence.edges_exceeded:
+        if self.ctx.current_convergence.edges_exceeded:
             self.report('space not large enough to complete convergence')
             return False
-        elif not self.ctx.current_convergence.success and not self.ctx.current_convergence.iterations_exceeded:
-            # Single-point verification should not consume an iteration (it's a check, not a new grid)
-            if getattr(self.ctx.current_convergence, 'check_single_point', False):
-                self.report('Verifying predicted point for {}'.format(self.ctx.current_convergence.parameters.var))
-                return True
-            self.report('Still iteration on {}'.format(self.ctx.current_convergence.parameters.var))
-            self.ctx.current_convergence.advance_iteration()
-            return True
-        
-        elif not self.ctx.current_convergence.success and \
-                   self.ctx.current_convergence.current_iteration > self.ctx.current_convergence.parameters.max_iterations:
-            self.report('Iterations: {} - Max iterations: {}'.format(self.ctx.current_convergence.current_iteration,self.ctx.current_convergence.parameters.max_iterations))
-            self.report('Workflow failed due to some failed calculation in the investigation of {}'.format(self.ctx.current_convergence.parameters.var))
 
-            return False
-        
-        # successful case:
-        elif self.ctx.current_convergence.success:
-            if len(self.ctx.input_manager.parameters_space) == 0:
-                self.report("No more parameters to be converged, the workflow will not continue.")
-                return False
-            # do not clear hint here — update_next_step needs it to persist the
-            # just-converged values (FFTGvecs) and to apply them in heavy mode
+        if not self.ctx.current_convergence.success:
+            # Single-point verification should not consume an iteration (it's a check, not a new grid)
+            if self.ctx.current_convergence.check_single_point:
+                self.report('Verifying predicted point for {}'.format(self.ctx.current_convergence.parameters.var))
+            else:
+                self.report('Still iteration on {}'.format(self.ctx.current_convergence.parameters.var))
             return True
-        else:
-            self.report('Undefined state on {}, so we exit'.format(self.ctx.current_convergence.parameters.var))
-            self.ctx.current_convergence.success = 'undefined'
-            return False
+
+        # successful case, with other parameters to be converged:
+        # do not clear hint here — update_next_step needs it to persist the
+        # just-converged values (FFTGvecs) and to apply them in heavy mode
+        return True
         
     def update_next_step(self):
         
@@ -652,6 +640,10 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 what=self.ctx.input_manager.workflow_settings['what']
             )
             self.ctx.hint = {}
+        elif not self.ctx.current_convergence.cannot_stop and not self.ctx.current_convergence.check_single_point:
+            # the set of calculations is complete and the convergence not reached: a new grid (iteration) starts.
+            # A single-point verification does not consume an iteration (it's a check, not a new grid).
+            self.ctx.current_convergence.advance_iteration()
         
         self.report(f'Convergence on: {self.ctx.current_convergence.parameters.var}')
         if len(self.ctx.current_convergence.parameters.mirror_values) >0: self.report(f'With them, we mirror the following parameters {self.ctx.current_convergence.parameters.mirror_values}')
@@ -698,6 +690,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 f'Grid for {", ".join(evaluator.parameters.var)} contains only invalid '
                 '(non-positive/out-of-bound) values; stopping convergence.'
             )
+            self._emit_story_outputs()
             return self.exit_codes.SPACE_TOO_SMALL
 
         if evaluator.check_single_point:
@@ -722,6 +715,9 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             self.ctx.max_bands_needed = 0
 
         self.report(f'Prepared grid with {len(self.ctx.params_space)} points, max_bands_needed={self.ctx.max_bands_needed}')
+
+        # do we need a preliminary calculation? We decide here, so the `p2y_needed` predicate stays pure.
+        self.ctx.run_p2y = self._evaluate_p2y_needed()
 
     def perform_next_step(self):
         """This function will submit the next step"""
@@ -760,7 +756,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 evaluator=evaluator,
                 explicit_value=self.ctx.params_space, 
                 workflow_dict=self.ctx.input_manager.parallelism_instructions,
-                index=evaluator.concurrent_steps_count if not evaluator.inquired_point else 0, # so if iteration = 1 and not finished, should start from evaluator.max_concurrent_steps+1
+                index=evaluator.concurrent_steps_count if evaluator.inquired_point is None else 0, # so if iteration = 1 and not finished, should start from evaluator.max_concurrent_steps+1
                 group=self.ctx.group,
                 calc_type=self.ctx.calc_type, 
             )
@@ -900,6 +896,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
 
         if df_batch.empty:
             self.report("Error: No dataframe rows found to analyze.")
+            self._emit_story_outputs()
             return self.exit_codes.UNDEFINED_STATE
 
         self.report(
@@ -1131,12 +1128,12 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         if decision['status'] != 'CONTINUE':
             evaluator.concurrent_steps_count = 0
 
-    def report_wf(self):
-        """Finalize outputs and set workflow exit status after convergence ends."""
+    def _emit_story_outputs(self):
+        """Set the `convergence_summary` and `collection` outputs: what has been found and computed so far.
 
-        evaluator = self.ctx.current_convergence
-        self.report('Final step. Workflow success: {}'.format(evaluator.success))
-
+        It is used also by the steps which stop the workflow with an exit code, so that the story of
+        the calculations is not lost when the convergence cannot be completed.
+        """
         summary = self.ctx.convergence_summary.copy() if hasattr(self.ctx, 'convergence_summary') else {}
         summary.pop('new_grid', None)
         summary.pop('already_computed', None)
@@ -1145,21 +1142,31 @@ class YamboConvergence(ProtocolMixin, WorkChain):
 
         # the `collection` output holds the full story of all the calculations
         # performed (the cumulative dataframe), not only the converged values.
-        collection = {'workflows': [int(pk) for pk in self.ctx.wfl_pk]}
+        # NOTE: `workflows` is ordered from the most recent calculation to the first one.
+        collection = {
+            'workflows': [int(pk) for pk in self.ctx.wfl_pk],
+            'workflows_uuids': [load_node(int(pk)).uuid for pk in self.ctx.wfl_pk],
+        }
         if hasattr(self.ctx, 'df'):
             df_records = self.ctx.df.where(pd.notnull(self.ctx.df), None).to_dict(orient='records')
             collection['story'] = df_records
         self.out('collection', store_Dict(_to_jsonable(collection)))
 
+    def report_wf(self):
+        """Finalize outputs and set workflow exit status after convergence ends."""
+
+        evaluator = self.ctx.current_convergence
+        self.report('Final step. Workflow success: {}'.format(evaluator.success))
+
+        self._emit_story_outputs()
+
         try:
-            last_uuid = evaluator.last_succeeded_uuid or self.ctx.final_result.get('uuid')
+            last_uuid = evaluator.last_succeeded_uuid
             if last_uuid:
                 calc = load_node(last_uuid)
-                if evaluator.success:
-                    calc.set_extra('converged', True)
                 self.out_many(self.exposed_outputs(calc, YamboWorkflow))
-        except Exception:
-            self.report('no YamboWorkflows available to expose outputs')
+        except Exception as exc:
+            self.report(f'no YamboWorkflows available to expose outputs: {exc}')
 
         if self.ctx.none_encountered:
             self.report('Some calculation failed, so we stopped the workflow')
@@ -1170,12 +1177,28 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         elif not evaluator.success:
             self.report('Convergence not reached')
             return self.exit_codes.CONVERGENCE_NOT_REACHED
-        elif evaluator.success == 'undefined':
-            self.report('Undefined state')
-            return self.exit_codes.UNDEFINED_STATE    
 
 ############################### preliminary calculation #####################
     def p2y_needed(self):
+        """Predicate for the outline: the decision is taken (and stored) in `prepare_grid`.
+
+        It must not modify the state, as it can be evaluated again when the workchain is reloaded from a checkpoint.
+        """
+        if getattr(self.ctx, 'run_p2y', None) is None: # old checkpoints
+            self.ctx.run_p2y = self._evaluate_p2y_needed()
+        return self.ctx.run_p2y
+
+    def _capped_nscf_bands(self, required_bands):
+        """Apply `bands_nscf_update` to the number of bands to be computed in the NSCF.
+
+        An integer N > 0 caps the number of bands to N; 0 and the string modes ('all-at-once', 'full-step', ...) do not cap.
+        """
+        mode = self.ctx.bands_mode
+        if isinstance(mode, int) and not isinstance(mode, bool) and mode > 0 and required_bands > 0:
+            return min(required_bands, mode)
+        return required_bands
+
+    def _evaluate_p2y_needed(self):
         """Determine whether a preliminary calculation is required before convergence."""
 
         if self.ctx.input_manager.workflow_settings.get('skip_pre'):
@@ -1195,27 +1218,8 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         if any(v in ('kpoint_mesh', 'kpoint_density') for v in current_parameters.var):
             return False
 
-        # Prefer the grid prepared in prepare_grid (which knows the shifted window's max)
-        # Fallback to the old stop-based estimate for direct calls / old checkpoints.
-        if hasattr(self.ctx, 'max_bands_needed') and getattr(self.ctx, 'max_bands_needed', 0):
-            self.ctx.gwbands = int(self.ctx.max_bands_needed)
-        else:
-            def _param_stop_value(identifier='nbnd'):
-                name = None
-                for n in current_parameters.var:
-                    if identifier in n.lower():
-                        name = n
-                if not name:
-                    return 0
-                index = current_parameters.var.index(name)
-                stop = current_parameters.stop[index]
-                if isinstance(stop, list):
-                    return stop[index]
-                return stop
-
-            self.ctx.gwbands = _param_stop_value(identifier='nbnd')
-        if isinstance(self.ctx.bands_mode, int) and self.ctx.gwbands > 0:
-            self.ctx.gwbands = min(self.ctx.gwbands, self.ctx.bands_mode)
+        # the grid prepared in prepare_grid knows the max number of bands (also of the shifted window)
+        self.ctx.gwbands = self._capped_nscf_bands(int(getattr(self.ctx, 'max_bands_needed', 0) or 0))
 
         try:
             already_done, parent_nscf, parent_scf = search_in_group(self.ctx.input_manager, self.ctx.group, calc_type=self.ctx.calc_type, up_to_p2y=True)
@@ -1267,7 +1271,8 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 return False
 
             return True
-        except Exception:
+        except Exception as exc:
+            self.report(f'Could not inspect the parent calculations ({type(exc).__name__}: {exc}), trying a simpler search.')
             try:
                 already_done, parent_nscf, parent_scf = search_in_group(self.ctx.input_manager, self.ctx.group, calc_type=self.ctx.calc_type, up_to_p2y=True)
 
@@ -1281,7 +1286,8 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                     parent_calc = take_calc_from_remote(self.ctx.input_manager.parent_folder)
                     self.ctx.input_manager.set_parent_folder(find_pw_parent(parent_calc, calc_type=['scf']).outputs.remote_folder)
                     return True
-            except Exception:
+            except Exception as exc:
+                self.report(f'Could not find any valid parent ({type(exc).__name__}: {exc}), so the pre-calculation will be done.')
                 return True
 
     def do_p2y(self):
@@ -1318,12 +1324,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                             except Exception:
                                 pass
             # Respect `bands_nscf_update`: 0 means no cap, int caps, 'all-at-once' -> band_max
-            required_nbnd = band_max
-            bm = self.ctx.bands_mode
-            if isinstance(bm, int) and required_nbnd > 0:
-                # bm == 0 -> no cap (keep required_nbnd); otherwise cap at bm
-                if bm != 0:
-                    required_nbnd = min(required_nbnd, bm)
+            required_nbnd = self._capped_nscf_bands(band_max)
             if required_nbnd and pre_manager.nscf.get_nbnd() < required_nbnd:
                 self.report(f"Raising NSCF nbnd to {required_nbnd} for bands convergence (was {pre_manager.nscf.get_nbnd()})")
                 pre_manager.set_nscf_nbnd(required_nbnd)
@@ -1370,10 +1371,13 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             return
         if not self.ctx.PRE.is_finished_ok:
             self.report('the pre calc was not succesful, exiting...')
+            self._emit_story_outputs()
             return self.exit_codes.PRECALC_FAILED
 
         self.report('setting the pre calc remote folder {} as parent'.format(self.ctx.PRE.outputs.remote_folder.pk))
         self.ctx.input_manager.set_parent_folder(self.ctx.PRE.outputs.remote_folder)
+        # it is consumed: in the next laps a stale pre-calculation must not override the parent we find.
+        self.ctx.PRE = None
 
 
 if __name__ == "__main__":
