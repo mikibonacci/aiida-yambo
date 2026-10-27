@@ -20,7 +20,7 @@ def periodical(structure):
 
     return Z_val, max(Ecut)
 
-def create_quantumespresso_inputs(structure, bands_gw=None, spin_orbit=False, what = ['scf','nscf']):
+def create_quantumespresso_inputs(structure, bands_gw=None, spin_orbit=False, what = None):
     
     '''
     with open('./scf_qe_default.json','r') as file:
@@ -28,6 +28,7 @@ def create_quantumespresso_inputs(structure, bands_gw=None, spin_orbit=False, wh
     with open('./nscf_qe_default.json','r') as file:
         nscf = json.load(file)
     '''
+    what = ['scf','nscf'] if what is None else what
     try:
         Z_valence, Ecut = periodical(structure.get_ase())
     except AttributeError: # already an ase Atoms object
