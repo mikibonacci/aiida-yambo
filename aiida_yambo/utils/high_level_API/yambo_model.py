@@ -26,17 +26,20 @@ class YamboRestartInputManager(GeneralInputManager):
     def BSEGcut(self,):
         return self.get_BSEGcut()
     
-    def remove_arguments(self, remove_tags:list[str]=[]):
+    def remove_arguments(self, remove_tags:list[str]=None):
+        remove_tags = [] if remove_tags is None else remove_tags
         for tag in remove_tags:
             if tag in self.parameters.get('arguments', []):
                 self.parameters['arguments'].remove(tag)
             
-    def set_arguments(self, add_tags:list[str]=[]):
+    def set_arguments(self, add_tags:list[str]=None):
+        add_tags = [] if add_tags is None else add_tags
         for tag in add_tags:
             if tag not in self.parameters['arguments']:
                 self.parameters['arguments'] += [tag]
     
-    def remove_variables(self, remove_tags:list[str]=[]):
+    def remove_variables(self, remove_tags:list[str]=None):
+        remove_tags = [] if remove_tags is None else remove_tags
         for tag in remove_tags:
             self.parameters['variables'].pop(tag, None)
     
@@ -48,8 +51,9 @@ class YamboRestartInputManager(GeneralInputManager):
             self.parameters.setdefault('variables', {})[name] = value
             
     def set_Nb(self, 
-               setter_tags:list[Literal['BndsRnXs','BndsRnXp','BndsRnXm','GbndRnge',]]=['BndsRnXp','GbndRnge',], 
+               setter_tags:list[Literal['BndsRnXs','BndsRnXp','BndsRnXm','GbndRnge',]]=None, 
                value:Union[list, int, float]=None, add_if_not_present:bool=True):
+        setter_tags = ['BndsRnXp','GbndRnge',] if setter_tags is None else setter_tags
         for variant in setter_tags:
             if variant in self.parameters.get('variables', {}) or add_if_not_present:
                 if not value:
@@ -62,8 +66,9 @@ class YamboRestartInputManager(GeneralInputManager):
                 self.set_variable(variant, value)
                 
     def set_Gcut(self, 
-                 setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=['NGsBlkXp'], 
+                 setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=None, 
                  value:Union[list, int, float]=None, add_if_not_present:bool=True, units:Literal['Ry', 'RL', 'mRy']='Ry'):
+        setter_tags = ['NGsBlkXp'] if setter_tags is None else setter_tags
         for variant in setter_tags:
             if variant in self.parameters.get('variables', {}) or add_if_not_present:
                 if not value:
@@ -73,14 +78,16 @@ class YamboRestartInputManager(GeneralInputManager):
                 self.set_variable(variant, value)
     
     def set_BSENb(self, 
-               setter_tags:list[Literal['BndsRnXs',]]=['BndsRnXs'], 
+               setter_tags:list[Literal['BndsRnXs',]]=None, 
                value:Union[list, int, float]=None, add_if_not_present:bool=True):
+        setter_tags = ['BndsRnXs'] if setter_tags is None else setter_tags
         self.set_Nb(setter_tags=setter_tags, value=value, add_if_not_present=add_if_not_present)
                 
     def set_BSEGcut(self,
-                    setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=['NGsBlkXs','BSENGBlk'],
+                    setter_tags:list[Literal['NGsBlkXs','NGsBlkXp','BSENGBlk']]=None,
                     value:Union[list, int, float]=None, add_if_not_present:bool=True,
                     units:Literal['Ry', 'RL', 'mRy']='Ry'):
+        setter_tags = ['NGsBlkXs','BSENGBlk'] if setter_tags is None else setter_tags
         self.set_Gcut(setter_tags=setter_tags, value=value,
                       add_if_not_present=add_if_not_present, units=units)
                 
@@ -99,7 +106,7 @@ class YamboRestartInputManager(GeneralInputManager):
         
         return self.parameters.get('variables',{}).get(name, None)
     
-    def get_Nb(self, search_tags:list[str]=['BndsRnXs','BndsRnXp','GbndRnge']):
+    def get_Nb(self, search_tags:list[str]=None):
         """Get the number of bands used for the calculation
         
         If different values are used e.g. for X and Sc, we take the maximum by default.
@@ -107,6 +114,7 @@ class YamboRestartInputManager(GeneralInputManager):
         We get the last number from the yambopy format [[1,Nb],''], as in the end Nb is what we need 
         to understand the nbnd value for QE runs.
         """
+        search_tags = ['BndsRnXs','BndsRnXp','GbndRnge'] if search_tags is None else search_tags
         Nb = 0
         for variant in search_tags:
             if variant not in self.parameters.get('variables',{}): continue
@@ -114,7 +122,8 @@ class YamboRestartInputManager(GeneralInputManager):
             Nb = Nb if Nb_variant < Nb else Nb_variant
         return Nb
     
-    def get_Gcut(self, search_tags:list[str]=['NGsBlkXs','NGsBlkXp','BSENGBlk']):
+    def get_Gcut(self, search_tags:list[str]=None):
+        search_tags = ['NGsBlkXs','NGsBlkXp','BSENGBlk'] if search_tags is None else search_tags
         Gcut = 0
         for variant in search_tags:
             if variant not in self.parameters.get('variables',{}): continue
@@ -123,7 +132,8 @@ class YamboRestartInputManager(GeneralInputManager):
                 Gcut = Gcut[0]
         return Gcut
     
-    def get_BSEGcut(self, search_tags:list[str]=['BSENGBlk']):
+    def get_BSEGcut(self, search_tags:list[str]=None):
+        search_tags = ['BSENGBlk'] if search_tags is None else search_tags
         return self.get_Gcut(search_tags=search_tags)
     
     def get_BSEbands(self,):
@@ -317,15 +327,18 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         self.QP_subsets_dict = subsets
     
     ############ START Redundant SETTER methods for yres easy access ############
-    def remove_arguments(self, remove_tags:list[str]=[]):
+    def remove_arguments(self, remove_tags:list[str]=None):
+        remove_tags = [] if remove_tags is None else remove_tags
         self.qp.remove_arguments(remove_tags)
         self.bse.remove_arguments(remove_tags)
             
-    def set_arguments(self, add_tags:list[str]=[]):
+    def set_arguments(self, add_tags:list[str]=None):
+        add_tags = [] if add_tags is None else add_tags
         self.qp.set_arguments(add_tags)
         self.bse.set_arguments(add_tags)
     
-    def remove_variables(self, remove_tags:list[str]=[]):
+    def remove_variables(self, remove_tags:list[str]=None):
+        remove_tags = [] if remove_tags is None else remove_tags
         self.qp.remove_variables(remove_tags)
         self.bse.remove_variables(remove_tags)
     
@@ -333,11 +346,13 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
         self.qp.set_variable(name, value)
         self.bse.set_variable(name, value)
             
-    def set_Nb(self, setter_tags:list[str]=['BndsRnXs','BndsRnXp','GbndRnge',], value:Union[list, int, float]=None, add_if_not_present:bool=False):
+    def set_Nb(self, setter_tags:list[str]=None, value:Union[list, int, float]=None, add_if_not_present:bool=False):
+        setter_tags = ['BndsRnXs','BndsRnXp','GbndRnge',] if setter_tags is None else setter_tags
         self.qp.set_Nb(setter_tags, value, add_if_not_present)
         self.bse.set_Nb(setter_tags, value, add_if_not_present)
                 
-    def set_Gcut(self, setter_tags:list[str]=['NGsBlkXs','NGsBlkXp','BSENGBlk'], value:Union[list, int, float]=None, add_if_not_present:bool=False,units:Literal['Ry', 'RL', 'mRy']='Ry'):
+    def set_Gcut(self, setter_tags:list[str]=None, value:Union[list, int, float]=None, add_if_not_present:bool=False,units:Literal['Ry', 'RL', 'mRy']='Ry'):
+        setter_tags = ['NGsBlkXs','NGsBlkXp','BSENGBlk'] if setter_tags is None else setter_tags
         self.qp.set_Gcut(setter_tags, value, add_if_not_present,units)
         self.bse.set_BSEGcut(setter_tags, value, add_if_not_present,units)
     ############ END Redundant SETTER methods for yres easy access ############
@@ -377,13 +392,16 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     def get_variable_value(self, name:str=''):
         return self.qp.get_variable_value(name)
     
-    def get_Nb(self, search_tags:list[str]=['BndsRnXs','BndsRnXp','GbndRnge']):
+    def get_Nb(self, search_tags:list[str]=None):
+        search_tags = ['BndsRnXs','BndsRnXp','GbndRnge'] if search_tags is None else search_tags
         return self.qp.get_Nb(search_tags)
     
-    def get_Gcut(self, search_tags:list[str]=['NGsBlkXs','NGsBlkXp']):
+    def get_Gcut(self, search_tags:list[str]=None):
+        search_tags = ['NGsBlkXs','NGsBlkXp'] if search_tags is None else search_tags
         return self.qp.get_Gcut(search_tags)
     
-    def get_BSEGcut(self, search_tags:list[str]=['BSENGBlk']):
+    def get_BSEGcut(self, search_tags:list[str]=None):
+        search_tags = ['BSENGBlk'] if search_tags is None else search_tags
         return self.bse.get_Gcut(search_tags=search_tags)
 
     def get_BSEbands(self,):
@@ -459,7 +477,8 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
             
         return results
     
-    def populate_builder(self, builder, what:Literal['YamboCalculation', 'YamboRestart','YamboWorkflow','YamboConvergence']='YamboWorkflow', skip:list[str]=[]):
+    def populate_builder(self, builder, what:Literal['YamboCalculation', 'YamboRestart','YamboWorkflow','YamboConvergence']='YamboWorkflow', skip:list[str]=None):
+        skip = [] if skip is None else skip
         p = self.generate_AiiDA_inputs(what=what)
         pp = AttributeDict(p)
         for k,v in pp.items():
