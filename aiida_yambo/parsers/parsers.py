@@ -1,35 +1,23 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import absolute_import
-from aiida.orm import FolderData
-from aiida.parsers.parser import Parser
-from aiida.common.exceptions import OutputParsingError
-from aiida.common.exceptions import UniquenessError
-from aiida.common.exceptions import ValidationError, ParsingError
-import numpy
 import copy
-from aiida.orm import ArrayData
-from aiida.orm import BandsData
-from aiida.orm import KpointsData
-from aiida.orm import Dict
-from aiida.orm import StructureData
-from aiida.plugins import DataFactory, CalculationFactory
-import glob, os, re
-
-from yamboparser.yambofile import *
-from yamboparser.yambofolder import YamboFolder
-
-from aiida_yambo.utils.common_helpers import *
-from aiida_yambo.parsers.utils import *
-
-from aiida_quantumespresso.calculations.pw import PwCalculation
-from aiida_quantumespresso.calculations import _uppercase_dict
-from six.moves import range
-import cmath
-import netCDF4
-
+import os
 import pathlib
 import tempfile
+
+import numpy
+import numpy as np
+from six.moves import range
+from yamboparser.yambofolder import YamboFolder
+
+from aiida.common.exceptions import OutputParsingError, ParsingError
+from aiida.orm import ArrayData, BandsData, Dict
+from aiida.parsers.parser import Parser
+from aiida.plugins import DataFactory
+from aiida_quantumespresso.calculations import _uppercase_dict
+
+from aiida_yambo.parsers.utils import parse_BS, parse_log, parse_report, parse_scheduler_stderr, yambo_wrote_dbs
+from aiida_yambo.utils.common_helpers import find_pw_parent, take_calc_from_remote
 
 SingleFileData = DataFactory('core.singlefile')
 
@@ -155,8 +143,8 @@ class YamboParser(Parser):
         cell = parent_calc.inputs.structure.cell
         try:
             parent_save_path = take_calc_from_remote(self._calc.inputs.parent_folder).outputs.output_parameters.get_dict().pop('ns_db1_path',None)
-        except:
-            parent_save_path: parent_save_path = '.'
+        except Exception: # no parent with the path of the SAVE
+            parent_save_path = '.'
     
 
         output_params = {'warnings': [], 'yambo_wrote_dbs': False, 'game_over': False,
@@ -432,7 +420,7 @@ class YamboParser(Parser):
         Vxc = numpy.array(ndbhf['Vxc'])
         try:
             Sc = numpy.array(ndbqp['So'])
-        except:
+        except KeyError:
             Sc = 1 / Z * E_minus_Eo - Sx + Vxc
         pdata = ArrayData()
         for quantity in ndbqp.keys():
