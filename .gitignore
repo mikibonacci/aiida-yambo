@@ -8,3 +8,4 @@ parser/.git
 dist
 build
 
+.DS_Store
