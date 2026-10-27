@@ -3,6 +3,7 @@ from __future__ import absolute_import
 #from curses import meta
 import copy
 import subprocess
+import warnings
 
 from aiida import orm
 from ase import units
@@ -31,7 +32,7 @@ from typing import Literal
 LegacyUpfData = DataFactory('core.upf')
 SingleFileData = DataFactory('core.singlefile')
 
-from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
+from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin, recursive_merge
 
 #### IMPORT THE NEW BASEMODEL MANAGER FOR INPUTS ####
 from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
@@ -499,7 +500,12 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
         overrides_scf = overrides.pop('scf',{})
         overrides_nscf = overrides.pop('nscf',{})
+        # `qp` and `bse` are the overrides of the corresponding YamboRestart; the old `yres` key applies to both.
         overrides_yres = overrides.pop('yres',{})
+        if overrides_yres:
+            warnings.warn("the `yres` overrides are deprecated, use `qp` and/or `bse`.", DeprecationWarning, stacklevel=2)
+        overrides_qp = recursive_merge(overrides_yres, overrides.pop('qp',{}))
+        overrides_bse = recursive_merge(overrides_yres, overrides.pop('bse',{}))
 
         for override in [overrides_scf,overrides_nscf]:
             override['clean_workdir'] = override.pop('clean_workdir',False) #required to have a valid parent folder
@@ -559,7 +565,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                         code=code,
                         protocol=protocol,
                         parent_folder=parent_folder,
-                        overrides=overrides_yres,
+                        overrides=overrides_qp,
                         NLCC=NLCC,
                         RIM_v=RIM_v,
                         RIM_W=RIM_W,
@@ -572,7 +578,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                 code=code,
                 protocol='bse_'+protocol,
                 parent_folder=parent_folder,
-                overrides=overrides_yres,
+                overrides=overrides_bse,
                 NLCC=NLCC,
                 RIM_v=RIM_v,
                 RIM_W=RIM_W,

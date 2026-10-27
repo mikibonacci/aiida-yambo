@@ -117,3 +117,31 @@ def test_workflow_builder_accepts_codes_by_label_and_keeps_overrides(aiida_profi
     assert overrides == {'scf': {'clean_workdir': True}}
     assert builder.scf['pw']['code'].uuid == codes['pw_code'].uuid
     assert builder.qp['yambo']['code'].uuid == codes['code'].uuid
+
+
+def _workflow_builder(codes, silicon, **kwargs):
+    from aiida_yambo.workflows.yambowf import YamboWorkflow
+
+    return YamboWorkflow.get_builder_from_protocol(structure=silicon, calc_type='bse@qp', **codes, **kwargs)
+
+
+def test_workflow_overrides_of_qp_and_bse_are_independent(aiida_profile, codes, silicon):
+    overrides = {'qp': {'yambo': {'parameters': {'variables': {'EXXRLvcs': [10, 'Ry']}}}},
+                 'bse': {'yambo': {'parameters': {'variables': {'BSEQptR': [[1, 1], '']}}}}}
+
+    builder = _workflow_builder(codes, silicon, overrides=overrides)
+
+    qp_variables = builder.qp['yambo']['parameters'].get_dict()['variables']
+    bse_variables = builder.bse['yambo']['parameters'].get_dict()['variables']
+    assert qp_variables['EXXRLvcs'] == [10, 'Ry'] and 'BSEQptR' not in qp_variables
+    assert bse_variables['BSEQptR'] == [[1, 1], ''] and 'EXXRLvcs' not in bse_variables
+
+
+def test_workflow_yres_overrides_still_apply_to_both_but_are_deprecated(aiida_profile, codes, silicon):
+    overrides = {'yres': {'yambo': {'parameters': {'variables': {'EXXRLvcs': [10, 'Ry']}}}}}
+
+    with pytest.warns(DeprecationWarning, match='yres'):
+        builder = _workflow_builder(codes, silicon, overrides=overrides)
+
+    for namespace in (builder.qp, builder.bse):
+        assert namespace['yambo']['parameters'].get_dict()['variables']['EXXRLvcs'] == [10, 'Ry']
