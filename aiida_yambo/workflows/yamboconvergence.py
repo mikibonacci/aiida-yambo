@@ -238,6 +238,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         calc_type:Literal['qp', 'bse', 'bse@qp']='qp',
         workflow_settings:dict=None,
         convergence_parameters:list=None,
+        scan_points:list=None,
         overrides:dict=None,
         NLCC:bool=False,
         RIM_v:bool=False,
@@ -258,7 +259,13 @@ class YamboConvergence(ProtocolMixin, WorkChain):
 
         `convergence_parameters` selects which of them to converge, and in which order, e.g.
         ['FFTGvecs', ['BndsRnXp','GbndRnge','NGsBlkXp']]: coupled parameters go in a nested list.
+
+        `scan_points` is an alternative: a list of dictionaries {variable: value}, one for each calculation to be
+        run, e.g. [{'FFTGvecs': 10, 'BndsRnXp': 100}, {'FFTGvecs': 15, 'BndsRnXp': 200}]. No convergence is
+        evaluated: the workflow just runs them (see `ScanParam`) and collects the results.
         """
+        if scan_points is not None and convergence_parameters is not None:
+            raise ValueError('`scan_points` and `convergence_parameters` cannot be used together.')
 
         # we never modify the dictionary of the caller
         overrides = copy.deepcopy(overrides) if overrides else {}
@@ -312,6 +319,10 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         if calc_type=='bse' and 'what' not in (workflow_settings or {}):
             settings['what'] = ['lowest_exciton','brightest_exciton']
         input_manager.workflow_settings = settings
+
+        if scan_points is not None:
+            input_manager.parameters_space = [ScanParam.from_dicts(scan_points)]
+            return input_manager.populate_builder(builder, what='YamboConvergence')
 
         ################ if K-points density ################
         # kpoint_density semantics = AiiDA distance (1/Å) passed straight to

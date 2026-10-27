@@ -145,3 +145,41 @@ def test_workflow_yres_overrides_still_apply_to_both_but_are_deprecated(aiida_pr
 
     for namespace in (builder.qp, builder.bse):
         assert namespace['yambo']['parameters'].get_dict()['variables']['EXXRLvcs'] == [10, 'Ry']
+
+
+SCAN = [{'FFTGvecs': 10, 'BndsRnXp': 100}, {'FFTGvecs': 15, 'BndsRnXp': 200}]
+
+
+def test_scan_builder_has_one_scan_with_the_given_sets(aiida_profile, codes, silicon):
+    from aiida_yambo.workflows.yamboconvergence import YamboConvergence
+    from aiida_yambo.workflows.utils.parameters import ScanParam, load_parameter_space
+
+    builder = YamboConvergence.get_builder_from_protocol(structure=silicon, scan_points=SCAN, **codes)
+
+    (scan,) = load_parameter_space(builder.parameters_space.get_list())
+    assert isinstance(scan, ScanParam)
+    assert scan.var == ['FFTGvecs', 'BndsRnXp']
+    assert scan.build_points() == [[10, 100], [15, 200]]
+    assert scan.units == ['Ry', '']
+    assert scan.mirror_values == {'BndsRnXp': ['GbndRnge']}
+    assert builder.workflow_settings.get_dict()['what'] == ['gap_GG']  # the quantities to collect are still there
+
+
+def test_scan_and_convergence_parameters_are_exclusive(aiida_profile, codes, silicon):
+    from aiida_yambo.workflows.yamboconvergence import YamboConvergence
+
+    with pytest.raises(ValueError, match='cannot be used together'):
+        YamboConvergence.get_builder_from_protocol(
+            structure=silicon, scan_points=SCAN, convergence_parameters=['FFTGvecs'], **codes)
+
+
+def test_scan_builder_can_be_instantiated_as_a_process(aiida_profile, codes, silicon, generate_workchain):
+    from aiida_yambo.workflows.yamboconvergence import YamboConvergence
+
+    builder = YamboConvergence.get_builder_from_protocol(structure=silicon, scan_points=SCAN, **codes)
+    process = generate_workchain(YamboConvergence, builder._inputs(prune=True))
+    try:
+        process.setup()
+        assert process.ctx.current_convergence.parameters.build_points() == [[10, 100], [15, 200]]
+    finally:
+        process.close()
