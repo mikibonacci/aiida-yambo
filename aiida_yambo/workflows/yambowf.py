@@ -404,7 +404,9 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
             required=False,
             default=lambda: False,
             non_db=True,
-            help="stop after NSCF if the DFT band analysis predicts a metallic system",
+            help="stop after NSCF if the DFT band analysis predicts a metallic system. "
+                 "NOTE: being `non_db`, it is not stored in the provenance and it is not restored by "
+                 "`get_builder_restart`, so YamboConvergence does not forward it to the YamboWorkflows it submits.",
         )
   
 
