@@ -1,13 +1,13 @@
-from __future__ import absolute_import
+import copy
+import logging
 
 import numpy as np
-from scipy import optimize
 from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt, style
-import pandas as pd
-import copy
-from ase import Atoms
-from aiida_yambo.utils.common_helpers import *
+
+from aiida.orm import load_node
+from aiida_yambo.utils.common_helpers import find_pw_parent
+
+LOGGER = logging.getLogger(__name__)
 
 
 def create_grid_1D(edges=None, delta=None, alpha=1/3, add=None, var=None, shift=0):
@@ -74,8 +74,8 @@ def create_grid_1D(edges=None, delta=None, alpha=1/3, add=None, var=None, shift=
         try:
             b_min = edges[0]+shift*delta[0]
             b_max = edges[1]+shift*delta[0]
-        except:
-            raise Exception(edges,delta)
+        except (IndexError, TypeError) as exc:
+            raise ValueError(f'invalid edges or delta: {edges}, {delta}') from exc
 
             
         A = b_min
@@ -84,7 +84,7 @@ def create_grid_1D(edges=None, delta=None, alpha=1/3, add=None, var=None, shift=
         E = alpha*(B-A)+A
         F = (1-alpha)*(B-A)+A
         
-        print(E,F)
+        LOGGER.debug('%s %s', E, F)
 
         space_b = np.arange(A, B+1,delta[0])
 
@@ -206,10 +206,10 @@ class The_Predictor_1D():
         else:
             try:
                 self.bb_Ry = copy.deepcopy(self.bande[0,np.array(self.result.BndsRnXp.values)-1]/13.6)
-            except:
+            except (IndexError, TypeError, AttributeError, KeyError): # not a bands convergence
                 try:
                     self.bb_Ry = copy.deepcopy(self.bande[0,-1]/13.6)
-                except:
+                except (IndexError, TypeError):
                     self.bb_Ry = 0
             
         self.r[:] = self.r[:] + self.Fermi
@@ -230,7 +230,7 @@ class The_Predictor_1D():
         xdata,ydata = self.parameters,self.r
         #print('fitting all simulations.')
         if len(ydata) < 2:
-            print(f"Not enough data points ({len(ydata)}) for 1D fit (need >=2), skipping fit")
+            LOGGER.warning(f"Not enough data points ({len(ydata)}) for 1D fit (need >=2), skipping fit")
             return False
 
         popt,pcov = curve_fit(f,xdata=xdata,
@@ -238,13 +238,13 @@ class The_Predictor_1D():
                       bounds=([-np.inf,-np.inf],[np.inf,np.inf]))
         
         MAE_int = np.average((abs(f(xdata,popt[0],popt[1])-ydata)),weights=xdata)
-        print('MAE fit = {} eV; power law = {}'.format(MAE_int,alpha))
+        LOGGER.debug('MAE fit = {} eV; power law = {}'.format(MAE_int,alpha))
         self.MAE_fit = MAE_int
         
         if verbose: 
-            print(np.max(xdata)*10)
-            print(np.min(xdata))
-            print('conv_thr, ',self.conv_thr)
+            LOGGER.debug(np.max(xdata)*10)
+            LOGGER.debug(np.min(xdata))
+            LOGGER.debug('conv_thr, %s', self.conv_thr)
             
         ###########Preliminary fit#################################
         
@@ -309,15 +309,15 @@ class The_Predictor_1D():
         p_H = f(b,popt[0],popt[1])
         try:
             l = ydata[np.where(xdata == max(xdata))][0]
-        except:
+        except (IndexError, TypeError):
             l = ydata[-1]
         
-        print('extra={} eV, \nlast calculation={} eV \nlast calculation from fit={} eV'.format(round(popt[1],3),
+        LOGGER.debug('extra={} eV, \nlast calculation={} eV \nlast calculation from fit={} eV'.format(round(popt[1],3),
                                                                                           round(l,2),round(p,3)))
         
-        if verbose: print('{} highest point from fit = {} eV\n'.format(b,round(p_H,3)))
-        if verbose: print('\nrelative err extra - last calculation = {}%'.format(round(100*abs((popt[1]-l)/(l)),3)))      
-        if verbose: print('relative err extra - highest point from fit = {}%'.format(round(100*abs((popt[1]-p_H)/(p_H)),3)))
+        if verbose: LOGGER.debug('{} highest point from fit = {} eV\n'.format(b,round(p_H,3)))
+        if verbose: LOGGER.debug('\nrelative err extra - last calculation = {}%'.format(round(100*abs((popt[1]-l)/(l)),3)))      
+        if verbose: LOGGER.debug('relative err extra - highest point from fit = {}%'.format(round(100*abs((popt[1]-p_H)/(p_H)),3)))
         
         if self.var_[0] == 'kpoint_mesh':
             self.kx_fit = self.kx_fit[self.X_fit <= max(max(xdata),self.X_fit[self.condition_conv_calc][0]*1.5)]
@@ -337,11 +337,12 @@ class The_Predictor_1D():
     
 
     def determine_next_calculation(self,
-                                   overconverged_values=[],
+                                   overconverged_values=None,
                                    plot=False,
                                    reference = None,save=False,):
         
-        print('last point:{} eV'.format(self.Z_fit[-1]))
+        overconverged_values = [] if overconverged_values is None else overconverged_values
+        LOGGER.debug('last point:{} eV'.format(self.Z_fit[-1]))
         
         if reference == 'extra':
             reference = self.extra
@@ -429,12 +430,13 @@ class The_Predictor_1D():
                 self.next_step['new_grid'] = True
         
         self.next_step['E_ref'] = reference
-        print('guessed next step: {} \n\n\n'.format(self.next_step))
+        LOGGER.debug('guessed next step: {} \n\n\n'.format(self.next_step))
 
         return self.next_step
     
-    def check_the_point(self,old_hints={}):
+    def check_the_point(self,old_hints=None):
         # Guard against missing keys after FIFO reset or first grid (old_hints may be just {'new_grid': True})
+        old_hints = {} if old_hints is None else old_hints
         if self.what not in old_hints or self.var_[0] not in old_hints:
             self.point_reached = False
             self.old_discrepancy = np.inf
@@ -447,13 +449,13 @@ class The_Predictor_1D():
             self.index = [int(self.result[(self.result['kx']==old_hints['kpoint_mesh'][0])].index.values[0])]
 
             explicit_gw_result=self.result[(self.result['kx']==old_hints['kpoint_mesh'][0])][self.what].values[0]
-            print('Discrepancy with old prediction: {} eV'.format(self.old_discrepancy))
+            LOGGER.debug('Discrepancy with old prediction: {} eV'.format(self.old_discrepancy))
 
             if old_hints['kpoint_mesh'][0] == self.next_step[self.var_[0]][0]:
                 self.point_reached = True
             else:
                 self.point_reached = False
-                print('new point predicted.')
+                LOGGER.debug('new point predicted.')
             
         else:
             self.old_discrepancy = \
@@ -461,19 +463,20 @@ class The_Predictor_1D():
             self.index = [int(self.result[(self.result[self.var_[0]]==old_hints[self.var_[0]])].index.values[0])]
             
             explicit_gw_result=self.result[(self.result[self.var_[0]]==old_hints[self.var_[0]])][self.what].values[0]
-            print('Discrepancy with old prediction: {} eV'.format(self.old_discrepancy))
+            LOGGER.debug('Discrepancy with old prediction: {} eV'.format(self.old_discrepancy))
 
             if old_hints[self.var_[0]] == self.next_step[self.var_[0]]:
                 self.point_reached = True
             else:
                 self.point_reached = False
-                print('new point predicted.')
+                LOGGER.debug('new point predicted.')
               
         return explicit_gw_result
     
     
-    def analyse(self,old_hints={},reference = None, plot= False,save_fit=False,save_next = False,colormap='viridis',thr_fx=5e-5):
+    def analyse(self,old_hints=None,reference = None, plot= False,save_fit=False,save_next = False,colormap='viridis',thr_fx=5e-5):
         
+        old_hints = {} if old_hints is None else old_hints
         self.check_passed = True
         error = 10
         power_laws = [1,2,3]
@@ -491,7 +494,7 @@ class The_Predictor_1D():
                 
                 
 
-        print('Best power law: {}'.format(ii))  
+        LOGGER.debug('Best power law: {}'.format(ii))  
         
         self.check_passed = self.fit_space_1D(fit=True,alpha=ii,beta=1,verbose=True,plot=plot,save=save_fit,thr_fx=thr_fx)
         
