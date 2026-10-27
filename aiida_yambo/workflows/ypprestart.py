@@ -1,25 +1,17 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import
-import sys
+import logging
 import warnings
 
-from aiida.orm import RemoteData
-from aiida.orm import Str, Dict, Int, Bool, load_code
-
-from aiida.common import ValidationError
-
-from aiida.engine import WorkChain, while_, if_
-from aiida.engine import ToContext
-from aiida.engine import submit
+from aiida.engine import while_
 from aiida.engine.processes.workchains.restart import BaseRestartWorkChain
 from aiida.engine.processes.workchains.utils import ProcessHandlerReport, process_handler
-from aiida.orm import FolderData, Str, List
+from aiida.orm import Bool, Dict, FolderData, List, RemoteData, Str, load_code
+from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
 from aiida_yambo.calculations.ypp import YppCalculation
-from aiida_yambo.utils.parallel_namelists import *
-from aiida_yambo.utils.common_helpers import *
+from aiida_yambo.utils.common_helpers import take_calc_from_remote
 
-from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
+LOGGER = logging.getLogger(__name__)
 
 class YppRestart(ProtocolMixin, BaseRestartWorkChain):
 
@@ -97,13 +89,14 @@ class YppRestart(ProtocolMixin, BaseRestartWorkChain):
         cls,
         code,
         protocol='merge_QP',
-        overrides={},
+        overrides=None,
         parent_folder=None,
         **_
     ):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
         :return: a process builder instance with all inputs defined ready for launch.
         """
+        overrides = {} if overrides is None else overrides
         from aiida_quantumespresso.workflows.protocols.utils import recursive_merge
 
         if isinstance(code, str):           
@@ -129,7 +122,7 @@ class YppRestart(ProtocolMixin, BaseRestartWorkChain):
             metadata_overrides = overrides.get('metadata', {})
             metadata = recursive_merge(metadata, metadata_overrides)
 
-        print('Summary of the inputs:{}\n'\
+        LOGGER.info('Summary of the inputs:{}\n'\
             .format(parameters))
 
         builder = cls.get_builder()
@@ -194,7 +187,7 @@ class YppRestart(ProtocolMixin, BaseRestartWorkChain):
 
         try:
             calculation = self.ctx.children[self.ctx.iteration - 1]
-        except:
+        except IndexError: # no calculation was run: we have only the parent
             calculation = self.ctx.parent_calc
         
         if hasattr(self.inputs,'pw2wannier90_parent'):
