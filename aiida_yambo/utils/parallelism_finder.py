@@ -1,3 +1,6 @@
+import logging
+
+LOGGER = logging.getLogger(__name__)
 def reorganize_resources(mpi_new, nodes, mpi_per_node, threads):
 
     nodes = mpi_new/mpi_per_node
@@ -45,11 +48,11 @@ def distribute(tasks=10, what='DIP', **ROLEs):
     
     if what=='DIP':
         if tasks > ROLEs['c']*ROLEs['k']*ROLEs['v']: 
-            print('set')
+            LOGGER.debug('set')
             tasks = ROLEs['c']*ROLEs['k']*ROLEs['v']
         b,k = balance(tasks=tasks,a=ROLEs['c']+ROLEs['v'],b=ROLEs['k'])
         c,v = balance(tasks=b,a=ROLEs['c'],b=ROLEs['v'])
-        print('mpi k c v')
+        LOGGER.debug('mpi k c v')
         return k*c*v,k,c,v
         
     elif what == 'X':
@@ -62,25 +65,26 @@ def distribute(tasks=10, what='DIP', **ROLEs):
         else:
             g = 1
         q = 1
-        print('mpi q k g c v')
+        LOGGER.debug('mpi q k g c v')
         return q*k*g*c*v,q,k,g,c,v
         
     elif what == 'SE':       
         if tasks > ROLEs['q']*ROLEs['qp']*ROLEs['b']*ROLEs['g']: 
             tasks = ROLEs['q']*ROLEs['qp']*ROLEs['b']*ROLEs['g']
         b,qp = balance(tasks=tasks,a=ROLEs['b'],b=ROLEs['qp'])
-        print(b,qp)
+        LOGGER.debug('%s %s', b, qp)
         if ROLEs['g']> 1: 
             b,g = balance(tasks=b,a=ROLEs['b'],b=ROLEs['g'])
         else:
             g = 1
         q = 1
-        print('mpi q qp b g')
+        LOGGER.debug('mpi q qp b g')
         return q*qp*b*g,q,qp,b,g
 
 def find_parallelism_qp(nodes, mpi_per_node, threads, bands, occupied=2, qp_corrected=2, kpoints = 1, \
-                        last_qp = 2, namelist = {}):
+                        last_qp = 2, namelist = None):
                                                 
+    namelist = {} if namelist is None else namelist
     mpi = nodes*mpi_per_node
 
     # GW #
@@ -99,7 +103,7 @@ def find_parallelism_qp(nodes, mpi_per_node, threads, bands, occupied=2, qp_corr
 
     if 'HF_issue' in []:
         if last_qp <= occupied:
-             print('last_qp lower than occupied, setting to occupied')
+             LOGGER.debug('last_qp lower than occupied, setting to occupied')
              last_qp = occupied+1 
         bands = last_qp*qp_corrected
     
