@@ -7,7 +7,7 @@ name = "aiida-yambo"
 version = "3.0.0"
 description = "YAMBO plugin and workflows for AiiDA"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 
 authors = [
@@ -21,6 +21,10 @@ classifiers = [
     "Framework :: AiiDA",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Physics",
 ]
 
@@ -28,6 +32,7 @@ dependencies = [
     "aiida-quantumespresso>=3.0.0a6,<6.0",
     "aiida_core[atomic_tools]>=2.4.1,<3",
     "h5py",
+    "importlib_resources",
     "netcdf4",
     "numpy>=1.20.1",
     "pandas>=2",
@@ -53,10 +58,8 @@ tests = [
 ]
 
 pre-commit = [
-    "pre-commit==1.11.0",
-    "prospector==0.12.11",
-    "pylint==1.9.3",
-    "yapf==0.24.0",
+    "pre-commit>=3",
+    "ruff>=0.5",
 ]
 
 [project.entry-points."aiida.calculations"]
@@ -78,3 +81,22 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["aiida_yambo*"]
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["docs", "examples", "tests/old_wc.py"]
+
+[tool.ruff.lint]
+# Only the errors which break the code: syntax errors, undefined names, invalid comparisons.
+# More rules will be added when the code base is formatted.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.ruff.lint.per-file-ignores]
+# undefined names which are known and still to be fixed (see the changelog of the cleanup)
+"aiida_yambo/utils/common_helpers.py" = ["F821"]
+"aiida_yambo/utils/k_path_utils.py" = ["F821"]
+"aiida_yambo/parsers/yppparser.py" = ["F821"]
+"aiida_yambo/workflows/ypprestart.py" = ["F821"]
+"aiida_yambo/workflows/utils/collectors.py" = ["F821"]
+"aiida_yambo/workflows/utils/fittings.py" = ["F821"]
+"aiida_yambo/commands/*.py" = ["F821"]
