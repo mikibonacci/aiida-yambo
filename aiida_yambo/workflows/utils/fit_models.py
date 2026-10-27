@@ -13,7 +13,7 @@ that the provenance stores only plain data. A name resolves, in this order, to:
 3. the built-in models: ``power_law`` and ``exponential`` (1D only).
 
 A registered object is a *factory*: ``factory(options, variable) -> list of models``, where ``options`` is the
-``fit_options`` dictionary and ``variable`` the name of the converged variable (e.g. 'kpoint_mesh'). The
+``fit_options`` dictionary and ``variable`` the name of the converged variable (e.g. 'kpoint_mesh'; the tuple of the two names in 2D). The
 predictor fits all the models of the list and keeps the one with the smallest error (e.g. the power laws with
 different exponents).
 

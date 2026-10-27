@@ -4,6 +4,8 @@ import logging
 import numpy as np
 from scipy.optimize import curve_fit
 
+from aiida_yambo.workflows.utils.fit_models import DEFAULT_FIT_FUNCTION, PowerLawProduct2D, get_fit_models
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -76,6 +78,12 @@ class The_Predictor_2D():
 
         if not hasattr(self, 'Fermi'):
             self.Fermi = 0
+
+        # the function to be fitted: see fit_models.py (parameters of older workflows have no fit_function)
+        if not hasattr(self, 'fit_function'):
+            self.fit_function = DEFAULT_FIT_FUNCTION
+        if not hasattr(self, 'fit_options'):
+            self.fit_options = {}
 
         self.var_ = list(self.var)
         self.delta_ = list(self.delta)
@@ -164,28 +172,25 @@ class The_Predictor_2D():
             
 ################################################################
 
-    def fit_space_2D(self,fit=False,alpha=1,beta=1,reference = None,verbose=True,plot=False,dim=100,colormap='gist_rainbow_r',b=None,g=None,save=False,thr_fx=5e-5,thr_fy=5e-5,thr_fxy=1e-8):
+    def fit_space_2D(self,fit=False,alpha=1,beta=1,reference = None,verbose=True,plot=False,dim=100,colormap='gist_rainbow_r',b=None,g=None,save=False,thr_fx=5e-5,thr_fy=5e-5,thr_fxy=1e-8,model=None):
+        """Fit the model (default: the product of power laws with exponents `alpha` and `beta`) and look for the plateau."""
         
-        f = lambda x,a,b,c,d: (a/x[0]**alpha + b)*( c/x[1]**beta + d)
-        fx = lambda x,a,c,d: -alpha*a/(x[0]**(alpha+1))*( c/x[1] + d)
-        fy = lambda x,a,b,c: (a/x[0] + b)*( -beta*c/x[1]**(beta+1) )
-        
-        fxy = lambda x,a,c: -alpha*a/(x[0]**(alpha+1))*( -beta*c/x[1]**(beta+1))
+        model = model if model is not None else PowerLawProduct2D(alpha, beta)
          
         xdata,ydata = np.array((self.parameters[0,:],self.parameters[1,:])),self.r[:]
         LOGGER.debug('fitting all simulations.')
         
         LOGGER.debug(np.shape(1/(xdata[0]*xdata[1])))
-        # Need at least as many points as parameters (4) for a stable fit
-        if len(ydata) < 4:
-            LOGGER.warning(f"Not enough data points ({len(ydata)}) for 2D fit (need >=4), skipping fit")
+        # Need at least as many points as parameters for a stable fit
+        if len(ydata) < model.n_parameters:
+            LOGGER.warning(f"Not enough data points ({len(ydata)}) for 2D fit (need >={model.n_parameters}), skipping fit")
             return False
             
-        popt,pcov = curve_fit(f,xdata=xdata,
-                      ydata=ydata,sigma=1/(xdata[0]*xdata[1]),
-                      bounds=([-np.inf,-np.inf,-np.inf,-np.inf],[np.inf,np.inf,np.inf,np.inf]))
+        popt,pcov = curve_fit(model,xdata=xdata,
+                      ydata=ydata,sigma=model.sigma(xdata),p0=model.p0(xdata,ydata),
+                      bounds=model.bounds())
         
-        MAE_int = np.average((abs(f(xdata,popt[0],popt[1],popt[2],popt[3],)-ydata)),weights=xdata[0]*xdata[1])
+        MAE_int = np.average((abs(model(xdata,*popt)-ydata)),weights=xdata[0]*xdata[1])
         #print('MAE fit = {} eV'.format(MAE_int))
         self.MAE_fit = MAE_int
         
@@ -203,20 +208,18 @@ class The_Predictor_2D():
         self.X_fit = np.arange(min(xdata[0]),max(xdata[0])*10,self.delta_[0])
         self.Y_fit = np.arange(min(xdata[1]),max(xdata[1])*10,self.delta_[1])
                 
-        self.Zx_fit = fx(np.meshgrid(self.X_fit,self.Y_fit),popt[0],popt[2],popt[3])
-        self.Zy_fit = fy(np.meshgrid(self.X_fit,self.Y_fit),popt[0],popt[1],popt[2])
-        self.Zxy_fit = fxy(np.meshgrid(self.X_fit,self.Y_fit),popt[0],popt[2])
+        self.Zx_fit, self.Zy_fit, self.Zxy_fit = model.derivatives(np.meshgrid(self.X_fit,self.Y_fit),*popt)
         
         self.X_fit,self.Y_fit = np.meshgrid(self.X_fit,self.Y_fit)
         
-        self.extra = popt[1]*popt[3]
+        self.extra = model.asymptote(popt) # None if the model has no value at infinity
 
         ###########Estimation of the plateaux corner###############
         
-        if reference == 'extra':
+        if reference == 'extra' and self.extra is not None:
             reference = self.extra
         else:
-            self.Z_fit = f(np.meshgrid(self.X_fit,self.Y_fit),popt[0],popt[1],popt[2],popt[3])  
+            self.Z_fit = model(np.meshgrid(self.X_fit,self.Y_fit),*popt)  
             reference = self.Z_fit[-1,-1]
             
         if self.conv_thr_units=='%':
@@ -240,8 +243,8 @@ class The_Predictor_2D():
             
         #print('b: {}\ng: {}'.format(b,g))
         
-        p = f(np.array((max(xdata[0,:]),max(xdata[1,:]))),popt[0],popt[1],popt[2],popt[3])
-        p_H = f(np.array((b,g)),popt[0],popt[1],popt[2],popt[3])
+        p = model(np.array((max(xdata[0,:]),max(xdata[1,:]))),*popt)
+        p_H = model(np.array((b,g)),*popt)
         try:
             l = ydata[np.where((xdata[0] == max(xdata[0])) & (xdata[1] == max(xdata[1])))][0]
         except (IndexError, TypeError):
@@ -257,16 +260,14 @@ class The_Predictor_2D():
         self.X_fit = np.arange(min(xdata[0]),b+1,self.delta_[0])
         self.Y_fit = np.arange(min(xdata[1]),g+1,self.delta_[1])
         
-        self.Z_fit = f(np.meshgrid(self.X_fit,self.Y_fit),popt[0],popt[1],popt[2],popt[3])
+        self.Z_fit = model(np.meshgrid(self.X_fit,self.Y_fit),*popt)
         
-        self.Zx_fit = fx(np.meshgrid(self.X_fit,self.Y_fit),popt[0],popt[2],popt[3])
-        self.Zy_fit = fy(np.meshgrid(self.X_fit,self.Y_fit),popt[0],popt[1],popt[2])
-        self.Zxy_fit = fxy(np.meshgrid(self.X_fit,self.Y_fit),popt[0],popt[2])
+        self.Zx_fit, self.Zy_fit, self.Zxy_fit = model.derivatives(np.meshgrid(self.X_fit,self.Y_fit),*popt)
         
         self.X_fit,self.Y_fit = np.meshgrid(self.X_fit,self.Y_fit)
 
        
-        self.gradient_angle = popt[0]*popt[2]*np.sign(self.Z_fit[-1,-1])
+        self.gradient_angle = model.gradient_angle(popt, self.Z_fit[-1,-1])
             
         return True
     
@@ -280,7 +281,7 @@ class The_Predictor_2D():
         overconverged_values = [] if overconverged_values is None else overconverged_values
         LOGGER.debug('last point:{} eV'.format(self.Z_fit[-1,-1]))
         
-        if reference == 'extra':
+        if reference == 'extra' and self.extra is not None:
             reference = self.extra
         else:
             reference = self.Z_fit[-1,-1]
@@ -369,20 +370,19 @@ class The_Predictor_2D():
         old_hints = {} if old_hints is None else old_hints
         self.check_passed = True
         error = 10
-        ii, jj = 1, 1
+        models = get_fit_models(self.fit_function, 2, self.fit_options, tuple(self.var_))
 
-        power_laws = [1,2]
-        for i in power_laws:
-            for j in power_laws:
-                LOGGER.debug('%s %s', i, j)
-                self.fit_space_2D(fit=True,alpha=i,beta=j,plot=False,dim=10, colormap='viridis',reference=reference,thr_fx=thr_fx,thr_fy=thr_fy,thr_fxy=thr_fxy)
-                if hasattr(self, 'MAE_fit') and self.MAE_fit<error:
-                    ii,jj = i,j
-                    error = self.MAE_fit
+        best = models[0]
+        for model in models:
+            LOGGER.debug('%s', model)
+            self.fit_space_2D(fit=True,model=model,plot=False,dim=10, colormap='viridis',reference=reference,thr_fx=thr_fx,thr_fy=thr_fy,thr_fxy=thr_fxy)
+            if hasattr(self, 'MAE_fit') and self.MAE_fit<error:
+                best = model
+                error = self.MAE_fit
 
-        LOGGER.debug('\nBest power laws: {}, {}\n'.format(ii,jj))            
+        LOGGER.debug('\nBest model: {}\n'.format(best))            
         
-        self.check_passed = self.fit_space_2D(fit=True,alpha=ii,beta=jj,verbose=False,plot=plot,save=save_fit,colormap=colormap,reference=reference,thr_fx=thr_fx,thr_fy=thr_fy,thr_fxy=thr_fxy)
+        self.check_passed = self.fit_space_2D(fit=True,model=best,verbose=False,plot=plot,save=save_fit,colormap=colormap,reference=reference,thr_fx=thr_fx,thr_fy=thr_fy,thr_fxy=thr_fxy)
         
         if not self.check_passed:
             self.point_reached = False
@@ -399,7 +399,7 @@ class The_Predictor_2D():
         
         self.point_reached = False
 
-        if reference == 'extra':
+        if reference == 'extra' and self.extra is not None:
             reference = self.extra
         else:
             reference = self.Z_fit[-1,-1]
@@ -416,7 +416,7 @@ class The_Predictor_2D():
 
                 converged_value = self.check_the_point(old_hints)
                 
-                if reference == 'extra':
+                if reference == 'extra' and self.extra is not None:
                     reference = self.extra
                 else:
                     reference = self.Z_fit[-1,-1]
