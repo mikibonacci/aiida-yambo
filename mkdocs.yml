@@ -68,14 +68,12 @@ exclude_docs: |
   build/**
 nav:
   - Home: index.md
-  - Getting started:
-      - Overview: getting-started/index.md
-      - Installation: installation.md
+  - Installation:
+      - Install the plugin: installation.md
       - Configure AiiDA and codes: setup.md
-      - DFT starting point: tutorials/prerequisites.md
   - Tutorials:
       - Overview: tutorials/index.md
-      - Prerequisites: tutorials/prerequisites.md
+      - Prerequisites (DFT starting point): tutorials/prerequisites.md
       - High-level input API: tutorials/high-level-api.md
       - YamboWorkflow: tutorials/workflow.md
       - BSE and BSE@GW: tutorials/bse.md
@@ -83,9 +81,16 @@ nav:
       - Wannier90 interpolation: tutorials/wannier90.md
   - How-to:
       - Overview: how-to/index.md
-      - Recipes and troubleshooting: how-to/recipes.md
-      - Parallelism and restarts: how-to/parallelism.md
+      - Split the GW calculation (QP splitter): how-to/qp-splitter.md
+      - Resources and parallelism: how-to/resources.md
       - Scan values and choose fits: how-to/convergence-scan-and-fits.md
+      - Restarts and troubleshooting: how-to/restarts-and-troubleshooting.md
+      - Recipes: how-to/recipes.md
+  - Examples: examples.md
+  - Concepts:
+      - Overview: concepts/index.md
+      - Workflow flow: concepts/workflow-flow.md
+      - Convergence: concepts/convergence.md
   - Reference:
       - Overview: reference/index.md
       - Workflows: reference/workflows.md

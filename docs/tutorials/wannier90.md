@@ -1,6 +1,6 @@
 # Wannier90 band interpolation
 
-The `tutorials-aiida-yambo/yambo_wannier90/` examples combine Quantum ESPRESSO, Wannier90, and merged YAMBO QP databases. The workflow is:
+The Wannier90 examples combine Quantum ESPRESSO, Wannier90, and merged YAMBO QP databases. The workflow is:
 
 1. run a DFT NSCF calculation on a dense mesh;
 2. run Wannier90 and validate the interpolated DFT bands;
@@ -10,7 +10,7 @@ The `tutorials-aiida-yambo/yambo_wannier90/` examples combine Quantum ESPRESSO, 
 
 The reason for separating the DFT and QP stages is practical: Wannier90 provides a smooth representation of the DFT bands, while the merged QP database supplies corrections only where they are needed. The splitter avoids one very large YAMBO job and makes the independent QP pieces schedulable in parallel.
 
-The same AiiDA principle applies: pass remote folders and data nodes, not filesystem paths. Keep the code setup in the YAML files under `tutorials-aiida-yambo/Quantum_mobile_settings/` or replace it with your cluster configuration.
+The same AiiDA principle applies: pass remote folders and data nodes, not filesystem paths. Set up the codes for your cluster as described in [Configure AiiDA and codes](../setup.md).
 
 ## Select the QP window
 

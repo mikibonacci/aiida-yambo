@@ -1,6 +1,6 @@
 # Tutorials
 
-These tutorials replace the original notebooks with copyable Markdown examples. They follow the same progression as `tutorials-aiida-yambo/`, but use the current protocol/high-level API patterns exercised in `devbox_aiida/work/final`.
+These tutorials replace the original notebooks with copyable Markdown examples. They use the current protocol/high-level API patterns; each one has a runnable script in `examples/`.
 
 <div class="grid cards" markdown>
 

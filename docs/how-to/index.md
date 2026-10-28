@@ -8,13 +8,26 @@ Concise recipes for common operational tasks. They assume that the installation 
 
     Locate retrieved files, recover parents, and diagnose failed processes.
 
-    [Recipes and troubleshooting](recipes.md)
+    [Recipes](recipes.md)
 
--   **Make calculations robust**
+-   **Split the GW calculation**
 
-    Configure YAMBO parallelism and use automatic restart logic safely.
+    Choose which quasiparticles to compute, run them in several smaller runs, merge them, and size the resources.
 
-    [Parallelism and restarts](parallelism.md)
+    [QP splitter](qp-splitter.md)
+
+-   **Set the resources**
+
+    Nodes, MPI, threads, walltime and parallelism: in a workflow, in the QP splitter, and for given values of
+    the parameters in a convergence.
+
+    [Resources and parallelism](resources.md)
+
+-   **Understand failures and restarts**
+
+    What the restart layer does by itself, and what to check when a workflow stops.
+
+    [Restarts and troubleshooting](restarts-and-troubleshooting.md)
 
 -   **Control the convergence workflow**
 

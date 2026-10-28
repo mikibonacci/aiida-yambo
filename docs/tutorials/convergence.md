@@ -21,8 +21,8 @@ builder = YamboConvergence.get_builder_from_protocol(
 manager = YamboInputManager(**YamboInputManager.get_nested_inputs(
     builder, what='YamboConvergence', mode='builder'))
 manager.set_nscf_nbnd(76)
-manager.qp.set_Nb(75)
-manager.qp.set_Gcut(1)
+manager.qp.set_Nb(value=75)
+manager.qp.set_Gcut(value=1)
 manager.parameters_space = [
     # First sample the FFT grid in a one-dimensional scan.
     ConvParam('FFTGvecs', start=10, stop=30, delta=5, max=50,

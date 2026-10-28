@@ -6,7 +6,7 @@ Before running `YamboWorkflow`, prepare three things in AiiDA:
 2. a norm-conserving pseudopotential family;
 3. an SCF/NSCF Quantum ESPRESSO starting point, unless the workflow will create it for you.
 
-This page expands the original `tutorials-aiida-yambo/prerequisites/` notebooks into one reproducible Markdown tutorial. It uses silicon as a small example; the same steps apply to hBN, Cu, or any structure supported by Quantum ESPRESSO.
+This page is a reproducible Markdown tutorial; the same steps, in a script, are `examples/01_dft/01_scf_nscf.py`. It uses silicon as a small example; the same steps apply to hBN, Cu, or any structure supported by Quantum ESPRESSO.
 
 !!! note
     You need a configured AiiDA profile, a `pw.x` code, and a running daemon. The YAMBO interface requires norm-conserving pseudopotentials.
@@ -18,7 +18,7 @@ This page expands the original `tutorials-aiida-yambo/prerequisites/` notebooks 
 ```python
 from ase.io.espresso import read_espresso_in
 
-silicon = read_espresso_in('tutorials-aiida-yambo/data/silicon.in')
+silicon = read_espresso_in('silicon.in')  # your Quantum ESPRESSO input
 print(silicon)
 ```
 

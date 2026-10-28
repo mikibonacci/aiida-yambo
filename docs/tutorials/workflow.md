@@ -29,8 +29,8 @@ manager.scf.set_resources(mpi=2)
 manager.scf.set_npools(2)
 # The NSCF must contain at least all bands requested by GW.
 manager.set_nscf_nbnd(76)
-manager.qp.set_Nb(75)
-manager.qp.set_Gcut(1)
+manager.qp.set_Nb(value=75)
+manager.qp.set_Gcut(value=1)
 # Request values that are parsed into output_ywfl_parameters.
 manager.additional_parsing = ['gap_', 'gap_GG', 'homo', 'lumo']
 
@@ -55,8 +55,8 @@ This is the main advantage over manually chaining calculations: the provenance r
 manager.scf.set_kmesh([4, 4, 4])
 manager.nscf.set_kmesh([4, 4, 4])
 manager.set_nscf_nbnd(120)
-manager.qp.set_Nb(110)
-manager.qp.set_Gcut(4)
+manager.qp.set_Nb(value=110)
+manager.qp.set_Gcut(value=4)
 manager.set_pseudo_family('PseudoDojo/0.4/LDA/SR/standard/upf')
 print(manager.Nb, manager.nscf_nbnd, manager.has_enough_nbnd)
 ```

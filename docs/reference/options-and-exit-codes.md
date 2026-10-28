@@ -34,10 +34,11 @@ the `ndb.QP` databases (`yambopy mergeqp`, which must be available where the wor
 | `range_QP` | Energy window (eV) around mid-gap: the bands inside are selected automatically; with `full_bands` also the bands in between; `range_spectrum` sets the scissor window. |
 | `explicit` | List of `[k1, k2, b1, b2]` ranges. |
 | `consider_only` | Keep only these bands. |
-| `parallelism`, `resources`, `prepend_text` | Variables, resources and scheduler text for the splitted runs. |
+| `parallelism` | `'auto'` (the plugin distributes the MPI tasks on the QP of each run) or a dictionary of yambo variables, for the splitted runs. |
+| `resources`, `max_wallclock_seconds`, `queue_name`, `prepend_text`, `custom_scheduler_commands`, `clean_workdir` | Resources (the values not given are kept), walltime, queue, scheduler text and cleaning of the splitted runs. |
 | `extend_db` | Also build an extended QP database (scissor plus Fermi-Dirac smearing); extra keys `Nb`, `T_smearing`, `consider_only`. |
 
-Give exactly one of `boundaries`, `range_QP`, `explicit`. After the merge, outputs `merged_QP` and (if requested)
+Give exactly one of `boundaries`, `range_QP`, `explicit` (more than one, or an unknown key, raises an error; with none, all the bands of all the k-points are used). All the modes are explained in [the QP splitter how-to](../how-to/qp-splitter.md). After the merge, outputs `merged_QP` and (if requested)
 `extended_QP` are returned, together with `splitted_QP_calculations`.
 
 ## `YamboConvergence` inputs
@@ -47,7 +48,8 @@ Give exactly one of `boundaries`, `range_QP`, `explicit`. After the merge, outpu
 | `ywfl` | The inputs of the `YamboWorkflow` run for every point. |
 | `parameters_space` | `List` of parameters (`ConvParam`, `CoupledConvParam`, `KpointMeshConvParam`), converged in order, or a single `ScanParam`. Validated when the process is submitted. |
 | `workflow_settings` | `type`: `'heavy'` (the converged values are used by the following parameters) or `'cheap'` (every parameter starts from the initial inputs); `what`: quantities to converge; `bands_nscf_update`: `'all-at-once'`/`'full-step'` (compute the NSCF with the largest number of bands needed), or an integer N > 0 to cap the number of bands at N; `skip_pre`: skip the p2y pre-calculation (debug). |
-| `parallelism_instructions` | How to change the parallelism with the parameter values. |
+| `resource_rules` | `List` of rules `{'when': {...}, 'for': [steps], 'use': {...}}` giving the resources (nodes, MPI, threads, walltime, queue, parallelism) for given values of the parameters. Validated at submission; see [Resources](../how-to/resources.md). |
+| `parallelism_instructions` | Deprecated, use `resource_rules`. The old way of changing the parallelism with the parameter values. |
 | `group_label` | Group where all the calculations are kept and looked for to avoid repeating them (default: `convergence_tests_<formula>`). A calculation is reused only if it has the same structure, pseudopotentials, parameters and yambo variables. |
 
 Outputs: `collection` (always, also when the run stops early), `convergence_summary`, and the outputs of the last

@@ -47,8 +47,8 @@ manager.scf.set_npools(2)
 
 # YAMBO needs enough empty states in the NSCF calculation.
 manager.set_nscf_nbnd(76)
-manager.qp.set_Nb(75)
-manager.qp.set_Gcut(1)
+manager.qp.set_Nb(value=75)
+manager.qp.set_Gcut(value=1)
 
 # Ask the parser to expose quantities useful for the next analysis step.
 manager.additional_parsing = ['gap_', 'homo', 'lumo']
@@ -58,7 +58,7 @@ run = submit(YamboWorkflow, **aiida_inputs)
 ```
 
 !!! tip
-    This pattern is the one used by the maintained runners in `devbox_aiida/work/final`. Keep the protocol builder and manager construction in one helper, then add small case functions for each scientific variation.
+    This is the pattern of the scripts in `examples/` (settings on top, protocol builder, manager, submit). Keep the protocol builder and manager construction in one place, then add small variations for each scientific case.
 
 ## Resources without nested AiiDA metadata
 

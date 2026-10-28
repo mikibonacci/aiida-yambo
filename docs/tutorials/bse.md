@@ -23,8 +23,8 @@ builder = YamboWorkflow.get_builder_from_protocol(
     protocol='fast', calc_type='bse')
 manager = YamboInputManager(**YamboInputManager.get_nested_inputs(
     builder, what='YamboWorkflow', mode='builder'))
-manager.bse.set_BSENb(75)
-manager.bse.set_BSEGcut(4)
+manager.bse.set_BSENb(value=75)
+manager.bse.set_BSEGcut(value=4)
 manager.bse.set_BSEbands([4, 5])
 manager.bse.set_variable('KfnQP_E', [[0.5, 1, 1], ''])
 manager.additional_parsing = ['lowest_exciton', 'brightest_exciton']
@@ -44,9 +44,9 @@ builder = YamboWorkflow.get_builder_from_protocol(
     protocol='fast', calc_type='bse@qp')
 manager = YamboInputManager(**YamboInputManager.get_nested_inputs(
     builder, what='YamboWorkflow', mode='builder'))
-manager.qp.set_Nb(75)
-manager.qp.set_Gcut(1)
-manager.bse.set_BSENb(75)
+manager.qp.set_Nb(value=75)
+manager.qp.set_Gcut(value=1)
+manager.bse.set_BSENb(value=75)
 manager.bse.set_BSEbands([4, 5])
 manager.set_QP_subsets_dict(ki=1, kf=5, bi=3, bf=6,
                              qp_per_subset=8, parallel_runs=1)
