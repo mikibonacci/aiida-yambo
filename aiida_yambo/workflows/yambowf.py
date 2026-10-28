@@ -178,13 +178,66 @@ def extend_QP(filenames_List,output_name,ywfl_pk,qp_settings,QP): #just to have 
             QP_db_extended = SingleFileData(str(output_name).replace('fixed','extended'))
             return QP_db_extended
 
+QP_SUBSETS_KEYS = {
+    'parallel_runs', 'qp_per_subset', 'boundaries', 'range_QP', 'full_bands', 'range_spectrum', 'explicit',
+    'consider_only', 'parallelism', 'resources', 'prepend_text', 'extend_db', 'Nb', 'T_smearing',
+    'max_wallclock_seconds', 'queue_name', 'clean_workdir', 'custom_scheduler_commands',
+}
+QP_SUBSETS_SOURCES = ('boundaries', 'range_QP', 'explicit')
+
+def validate_QP_subsets_dict(QP_subsets_dict):
+    """Raise a ValueError if `QP_subsets_dict` has unknown keys or more than one source of subsets."""
+    unknown = sorted(set(QP_subsets_dict) - QP_SUBSETS_KEYS)
+    if unknown:
+        raise ValueError(f'Unknown keys in QP_subsets_dict: {unknown}. Allowed: {sorted(QP_SUBSETS_KEYS)}')
+    parallelism = QP_subsets_dict.get('parallelism')
+    if parallelism is not None and parallelism != 'auto' and not isinstance(parallelism, dict):
+        raise ValueError(f"QP_subsets_dict['parallelism'] must be a dict of yambo variables or 'auto', got {parallelism!r}")
+    sources = [key for key in QP_SUBSETS_SOURCES if key in QP_subsets_dict]
+    if len(sources) > 1:
+        raise ValueError(f'QP_subsets_dict: give only one of {QP_SUBSETS_SOURCES}, got {sources}')
+
 def set_QP_splitter_options(yambo_manager, QP_subsets_dict):
-    """Set on the splitted QP runs the `resources` and `prepend_text` requested in `QP_subsets_dict`."""
+    """Set on the splitted QP runs the options requested in `QP_subsets_dict`.
+
+    `resources` is merged over the resources already set (a partial dictionary does not reset the other values to 1),
+    `OMP_NUM_THREADS` follows `num_cores_per_mpiproc`, `max_wallclock_seconds` and `queue_name` are set if given, and
+    the remote folders of the splitted runs are cleaned unless `clean_workdir` is False.
+    """
     options = yambo_manager.metadata.options
     if 'resources' in QP_subsets_dict:
-        options.resources = ResourcesModel(**QP_subsets_dict['resources'])
+        merged = {**options.resources.model_dump(), **QP_subsets_dict['resources']}
+        options.resources = ResourcesModel(**merged)
+        options.prepend_text = 'export OMP_NUM_THREADS={}\n'.format(options.resources.num_cores_per_mpiproc) + options.prepend_text
+    for key in ('max_wallclock_seconds', 'queue_name'):
+        if key in QP_subsets_dict:
+            setattr(options, key, QP_subsets_dict[key])
     if 'prepend_text' in QP_subsets_dict:
-        options.prepend_text = QP_subsets_dict['prepend_text']
+        options.prepend_text += QP_subsets_dict['prepend_text']
+    if 'custom_scheduler_commands' in QP_subsets_dict:
+        options.custom_scheduler_commands += QP_subsets_dict['custom_scheduler_commands']
+    # NOTE: no AiiDA node here, generate_AiiDA_inputs creates it
+    yambo_manager.clean_workdir = QP_subsets_dict.get('clean_workdir', True)
+
+def set_auto_QP_parallelism(yambo_manager, subset, bands, occupied, kpoints, resources):
+    """Set the parallelism of a splitted QP run with `find_parallelism_qp`, for the QP of its `subset`.
+
+    `subset` is a list of [k1, k2, b1, b2] ranges, `bands` the total number of bands, `resources` the ones available (a dict): the solver distributes
+    the MPI tasks (it can use fewer of them if the QP are not enough to feed all of them). Starting always from the
+    same `resources`, a small subset does not reduce the resources of the following ones.
+    """
+    from aiida_yambo.utils.parallelism_finder import find_parallelism_qp
+
+    n_qp = sum((k2 - k1 + 1) * (b2 - b1 + 1) for k1, k2, b1, b2 in subset)
+    last_band = max(b2 for _, _, _, b2 in subset)
+    options = yambo_manager.metadata.options
+    parallelism, new_resources = find_parallelism_qp(
+        resources['num_machines'], resources['num_mpiprocs_per_machine'], resources['num_cores_per_mpiproc'],
+        bands, occupied, n_qp, kpoints, last_band)
+    for name, value in parallelism.items():
+        yambo_manager.set_variable(name=name, value=value)
+    options.resources = ResourcesModel(**{**resources, **new_resources})
+    return parallelism
 
 def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1,max_iterations=30):
     pw = find_pw_parent(ywfl)
@@ -239,8 +292,9 @@ def QP_mapper(ywfl,tol=1,full_bands=False,spectrum_tol=1,max_iterations=30):
         LOGGER.info('Found %s QPs', len(QP))
         LOGGER.info('Fermi level=%s eV', fermi)
 
-        b_min_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].min()
-        b_max_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].max()
+        # 1-based band indices, as yambo wants them (they are used for BSEBands)
+        b_min_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].min() + 1
+        b_max_scissored = np.where(abs(bands-mid_gap_energy)<spectrum_tol)[1].max() + 1
         
         return QP, [b_min_scissored,b_max_scissored]
 
@@ -359,8 +413,8 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     '    3. explicit : list of [k1, k2, b1, b2] ranges\n'
                     '       Directly specify the QP windows; merged into subsets with QP_list_merger.\n'
                     '\n'
-                    "    If none of the three is given, no 'subsets' key is created and the\n"
-                    '    workflow crashes with a KeyError.\n'
+                    "    If none of the three is given, the full range of bands (1 to Nb) of all the\n"
+                    '    k-points is used. Giving more than one raises an error.\n'
                     '\n'
                     'OPTIONAL KEYS:\n'
                     '    consider_only : list of bands, default [-1] (all)\n'
@@ -368,9 +422,15 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     '    parallelism : dict\n'
                     '        extra yambo parallelism variables set on each splitted run\n'
                     '    resources : dict\n'
-                    '        overrides the metadata.options.resources for the splitted runs.\n'
-                    '    prepend_text : str\n'
-                    '        overrides metadata.options.prepend_text for the splitted runs.\n'
+                    '        num_machines, num_mpiprocs_per_machine, num_cores_per_mpiproc for the splitted\n'
+                    '        runs; the values not given are kept from the previous step. OMP_NUM_THREADS\n'
+                    '        is exported accordingly.\n'
+                    '    max_wallclock_seconds, queue_name : walltime and queue of the splitted runs.\n'
+                    '    prepend_text, custom_scheduler_commands : str\n'
+                    '        added to the ones of the splitted runs (modules, #SBATCH lines...).\n'
+                    '    clean_workdir : bool, default True\n'
+                    '        clean the remote folders of the splitted runs once finished.\n'
+                    '    Unknown keys raise an error.\n'
                     '    extend_db : bool, default False\n'
                     '        if True, after the merge, run extend_QP() to build a scissored +\n'
                     '        Fermi-Dirac smeared extended QP database; extra keys:\n'
@@ -882,6 +942,11 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
 
             qp_futures = {}
 
+            # a failed batch stops the following ones: no resources are spent on a merge which cannot be done.
+            if self.ctx.qp_splitter > 0 and not all(load_node(uuid).is_finished_ok for uuid in self.ctx.splitted_QP):
+                self.report('Some splitted QP is failed, exiting... ')
+                return self.exit_codes.ERROR_SPLITTED_QP_FAILED
+
             # If this is the first QP iteration, we set the parent and all the needed inputs.
             if self.ctx.qp_splitter == 0:
                 calc = self.ctx.calc
@@ -900,13 +965,11 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     self.ctx.input_manager.qp.settings['COPY_DBS'] = True
 
                 # setting some specific configuration:
-                if 'parallelism' in self.ctx.input_manager.QP_subsets_dict:
+                if isinstance(self.ctx.input_manager.QP_subsets_dict.get('parallelism'), dict):
                     for k,v in self.ctx.input_manager.QP_subsets_dict['parallelism'].items():
                         self.ctx.input_manager.qp.set_variable(name=k, value=v)
+                validate_QP_subsets_dict(self.ctx.input_manager.QP_subsets_dict)
                 set_QP_splitter_options(self.ctx.input_manager.qp, self.ctx.input_manager.QP_subsets_dict)
-                
-
-                self.ctx.input_manager.clean_workdir = True # AAA: we do not set orm.Bool(True), as the generate_AiiDA_inputs will create the AiiDA nodes needed: otherwise, it will be in the ctx, but not stored: it will except.
                 if hasattr(self.ctx, 'mapping'):
                     mapping = self.ctx.mapping
                 else:
@@ -956,14 +1019,25 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                                                                         consider_only=consider_only,
                                                                         already_computed_QP_db = already_computed)
 
-                #self.report('subsets: {}'.format(self.ctx.input_manager.QP_subsets_dict['subsets']))
+                if self.ctx.input_manager.QP_subsets_dict.get('parallelism') == 'auto':
+                    pw = find_pw_parent(self.ctx.calc)
+                    pw_output = pw.outputs.output_parameters.get_dict()
+                    self.ctx.auto_parallelism = {
+                        'occupied': valence_conduction_bands(pw_output['number_of_electrons'], pw_output['spin_orbit_calculation'])[0],
+                        'kpoints': mapping['number_of_kpoints'],
+                        'bands': self.ctx.input_manager.Nb,
+                        'resources': self.ctx.input_manager.qp.metadata.options.resources.model_dump(),
+                    }
                 
             if self.ctx.number_of_subsets == 0:
                 self.ctx.number_of_subsets = len(self.ctx.input_manager.QP_subsets_dict['subsets'])
 
             for i in range(1,1+self.ctx.input_manager.QP_subsets_dict['parallel_runs']):
                 if len(self.ctx.input_manager.QP_subsets_dict['subsets']) > 0:
-                    self.ctx.input_manager.qp.set_variable(name='QPkrange', value=[self.ctx.input_manager.QP_subsets_dict['subsets'].pop(),''])
+                    subset = self.ctx.input_manager.QP_subsets_dict['subsets'].pop()
+                    self.ctx.input_manager.qp.set_variable(name='QPkrange', value=[subset,''])
+                    if self.ctx.input_manager.QP_subsets_dict.get('parallelism') == 'auto':
+                        set_auto_QP_parallelism(self.ctx.input_manager.qp, subset, **self.ctx.auto_parallelism)
                     self.ctx.input_manager.qp.metadata.call_link_label = 'yambo_QP_splitted_{}'.format(i+self.ctx.qp_splitter)
                     self.ctx.input_manager.set_parent_folder(self.ctx.calc.outputs.remote_folder)
                     what='qp'

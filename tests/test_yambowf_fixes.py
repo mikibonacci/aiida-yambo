@@ -83,8 +83,8 @@ def test_qp_mapper_enlarges_range_and_forwards_spectrum_tol(yambowf, monkeypatch
     QP, scissored = yambowf.QP_mapper(None, tol=0.1, spectrum_tol=0.6)
 
     assert QP == [[1, 1, 4, 4], [1, 1, 5, 5], [2, 2, 4, 4], [2, 2, 5, 5]]
-    # spectrum_tol=0.6 must survive the enlargements of tol: only bands 4 and 5 (0-based 3, 4)
-    assert scissored == [3, 4]
+    # spectrum_tol=0.6 must survive the enlargements of tol: only bands 4 and 5, 1-based as BSEBands wants them
+    assert scissored == [4, 5]
 
 
 def test_qp_mapper_gives_up_instead_of_recursing_forever(yambowf, monkeypatch):
@@ -270,7 +270,7 @@ def test_qp_splitter_options_are_applied_to_the_qp_manager(yambowf):
 
     assert manager.qp.metadata.options.resources.num_machines == 2
     assert manager.qp.metadata.options.resources.num_mpiprocs_per_machine == 8
-    assert manager.qp.metadata.options.prepend_text == 'module load yambo'
+    assert manager.qp.metadata.options.prepend_text == 'export OMP_NUM_THREADS=1\nmodule load yambo'
     assert manager.bse.metadata.options.prepend_text == ''  # nothing leaks to the BSE step
 
 
@@ -321,3 +321,81 @@ def test_qp_step_asks_the_additional_quantities_to_be_computed(yambowf, monkeypa
     assert qp.parameters is new_parameters
     assert wf.ctx.mapping == {'valence': 4}
     assert submitted == [(yambowf.YamboRestart, {'what': 'qp'})]
+
+
+def _qp_manager():
+    from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
+
+    return YamboInputManager(qp={'parameters': {'arguments': ['gw0'], 'variables': {}}}).qp
+
+
+def test_qp_splitter_partial_resources_keep_the_other_values(yambowf):
+    qp = _qp_manager()
+    qp.set_resources(nodes=1, mpi=16, threads=2)
+
+    yambowf.set_QP_splitter_options(qp, {'resources': {'num_machines': 4}})
+
+    resources = qp.metadata.options.resources
+    assert (resources.num_machines, resources.num_mpiprocs_per_machine, resources.num_cores_per_mpiproc) == (4, 16, 2)
+    assert 'export OMP_NUM_THREADS=2' in qp.metadata.options.prepend_text
+
+
+def test_qp_splitter_sets_walltime_queue_and_cleaning(yambowf):
+    qp = _qp_manager()
+
+    yambowf.set_QP_splitter_options(qp, {'max_wallclock_seconds': 600, 'queue_name': 'short'})
+    assert qp.metadata.options.max_wallclock_seconds == 600
+    assert qp.metadata.options.queue_name == 'short'
+    assert qp.clean_workdir is True
+
+    yambowf.set_QP_splitter_options(qp, {'clean_workdir': False})
+    assert qp.clean_workdir is False
+
+
+def test_qp_subsets_dict_validation(yambowf):
+    yambowf.validate_QP_subsets_dict({'parallel_runs': 1, 'qp_per_subset': 2, 'range_QP': 5.0, 'full_bands': True})
+    with pytest.raises(ValueError, match='Unknown keys'):
+        yambowf.validate_QP_subsets_dict({'parallel_runs': 1, 'parallell_runs': 2})
+    with pytest.raises(ValueError, match='only one of'):
+        yambowf.validate_QP_subsets_dict({'boundaries': {'bi': 1, 'bf': 2}, 'explicit': [[1, 1, 1, 2]]})
+
+
+def test_qp_splitter_stops_if_a_previous_batch_failed(yambowf, monkeypatch):
+    failed = SimpleNamespace(is_finished_ok=False)
+    monkeypatch.setattr(yambowf, 'load_node', lambda uuid: failed)
+    wf = _workflow(all_calcs_to_do=['QP splitter'], calc_to_do=None, qp_splitter=2, splitted_QP=['a'],
+                   merge_QP_needed=False, calc=SimpleNamespace(is_finished_ok=True))
+    wf.exit_codes = SimpleNamespace(ERROR_SPLITTED_QP_FAILED='FAILED')
+
+    assert yambowf.YamboWorkflow.perform_next(wf) == 'FAILED'
+
+
+def test_auto_qp_parallelism_sets_variables_and_resources(yambowf):
+    qp = _qp_manager()
+    base = {'num_machines': 1, 'num_mpiprocs_per_machine': 8, 'num_cores_per_mpiproc': 1}
+
+    parallelism = yambowf.set_auto_QP_parallelism(qp, [[1, 1, 3, 4], [2, 2, 3, 4]], bands=20, occupied=4, kpoints=2,
+                                                      resources=base)
+
+    assert parallelism['SE_CPU'] and parallelism['SE_ROLEs']
+    for name, value in parallelism.items():
+        assert qp.parameters['variables'][name] == value
+    assert qp.metadata.options.resources.num_machines == 1
+    assert qp.metadata.options.resources.num_mpiprocs_per_machine <= 8
+
+
+def test_qp_subsets_parallelism_must_be_dict_or_auto(yambowf):
+    yambowf.validate_QP_subsets_dict({'parallelism': 'auto'})
+    yambowf.validate_QP_subsets_dict({'parallelism': {'SE_CPU': '1 2 1 1'}})
+    with pytest.raises(ValueError, match='parallelism'):
+        yambowf.validate_QP_subsets_dict({'parallelism': 'balanced'})
+
+
+def test_qp_splitter_adds_scheduler_commands(yambowf):
+    qp = _qp_manager()
+    qp.set_scheduler_commands('#SBATCH --exclusive\n')
+
+    yambowf.set_QP_splitter_options(qp, {'custom_scheduler_commands': '#SBATCH --constraint=cpu'})
+
+    assert qp.metadata.options.custom_scheduler_commands == '#SBATCH --exclusive\n#SBATCH --constraint=cpu'
+    yambowf.validate_QP_subsets_dict({'custom_scheduler_commands': 'x'})
