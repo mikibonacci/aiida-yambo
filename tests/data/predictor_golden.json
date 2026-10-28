@@ -58,13 +58,13 @@
  "fft_power1": {
   "check_single_point": true,
   "hints": {
-   "E_ref": 5.005,
-   "FFTGvecs": 10,
+   "E_ref": 5.005833,
+   "FFTGvecs": 15,
    "already_computed": true,
-   "gap_": 5.05,
+   "gap_": 5.046667,
    "new_grid": false
   },
-  "inquired_point": 10,
+  "inquired_point": 15,
   "new_grid": false,
   "status": "CONVERGED"
  },
@@ -110,10 +110,10 @@
  "fft_tight_threshold": {
   "check_single_point": false,
   "hints": {
-   "E_ref": 5.005,
-   "FFTGvecs": 95,
+   "E_ref": 5.005833,
+   "FFTGvecs": 115,
    "already_computed": false,
-   "gap_": 5.005263,
+   "gap_": 5.006087,
    "new_grid": true
   },
   "inquired_point": null,
@@ -132,10 +132,10 @@
  "fft_wide_threshold": {
   "check_single_point": true,
   "hints": {
-   "E_ref": 5.005,
+   "E_ref": 5.005833,
    "FFTGvecs": 10,
    "already_computed": true,
-   "gap_": 5.05,
+   "gap_": 5.07,
    "new_grid": false
   },
   "inquired_point": 10,

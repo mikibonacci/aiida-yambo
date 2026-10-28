@@ -72,12 +72,12 @@ def _second_pass():
 
 def scenarios():
     return {
-        'fft_power1': lambda: _fft(lambda x: 5 + 0.5 / x),
+        'fft_power1': lambda: _fft(lambda x: 5 + 0.7 / x),
         'fft_power2': lambda: _fft(lambda x: 5 + 5 / x ** 2),
         'fft_power3_noise': lambda: _fft(lambda x: 5 + 100 / x ** 3 + 1e-5 * np.sin(x)),
         'fft_unconverged': lambda: _fft(lambda x: 5 + 8 / x, thr=0.5),
-        'fft_tight_threshold': lambda: _fft(lambda x: 5 + 0.5 / x, thr=0.01),
-        'fft_wide_threshold': lambda: _fft(lambda x: 5 + 0.5 / x, thr=5.0),
+        'fft_tight_threshold': lambda: _fft(lambda x: 5 + 0.7 / x, thr=0.01),
+        'fft_wide_threshold': lambda: _fft(lambda x: 5 + 0.7 / x, thr=5.0),
         'fft_second_pass': _second_pass,
         'bands_power1': _bands,
         'kdensity': _kdensity,
