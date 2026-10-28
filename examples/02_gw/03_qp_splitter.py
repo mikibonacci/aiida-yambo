@@ -1,6 +1,6 @@
 """GW with the QP splitter: the quasiparticles are computed by several smaller Yambo runs, then merged.
 
-Flow (from an NSCF parent):  p2y -> [ GW on a subset of the (k, band) pairs ] x N -> merge -> done
+Flow (from an NSCF parent):  p2y -> GW (screening, computed once) -> [ GW on a subset of the (k, band) pairs ] x N -> merge
 
 The QP splitter cuts the list of quasiparticles (QP) to compute in subsets of ``qp_per_subset`` (k, band) pairs,
 runs ``parallel_runs`` of them at the same time (each with its own resources), and merges the databases with
@@ -41,9 +41,13 @@ NSCF_NBND = 76
 QP_NB = 75
 QP_PER_SUBSET = 2  # (k, band) pairs in each run
 PARALLEL_RUNS = 1  # runs at the same time
-SPLIT_RESOURCES = None  # e.g. {'num_machines': 1, 'num_mpiprocs_per_machine': 4}: resources of each splitted run
+# Resources of each splitted run (see docs: how to choose them). The values not given are kept from the first run.
+SPLIT_RESOURCES = None  # e.g. {'num_machines': 1, 'num_mpiprocs_per_machine': 4, 'num_cores_per_mpiproc': 2}
+SPLIT_WALLTIME = None  # seconds, e.g. 7200
+SPLIT_PARALLELISM = None  # 'auto' (the plugin distributes the MPI tasks on the QP of each run) or a dict of yambo variables
 
 # What each MODE gives to `set_QP_subsets_dict` (bands and k-points are indices, starting from 1; Si has 2 valence bands)
+# --8<-- [start:modes]
 MODES = {
     'boundaries': dict(bi=3, bf=6),
     'k_range': dict(ki=1, kf=1, bi=1, bf=4),
@@ -52,6 +56,7 @@ MODES = {
     'explicit': dict(explicit=[[1, 1, 1, 2], [1, 1, 2, 2], [2, 2, 5, 5]]),
     'extend_db': dict(bi=2, bf=6, extend_db=True, consider_only=[4, 5]),
 }
+# --8<-- [end:modes]
 
 # ---------------------------------------------------------------------------
 # 2. Structure (the one of the parent)
@@ -78,11 +83,17 @@ manager.qp.set_Gcut(value=1)
 manager.additional_parsing = ['gap_', 'homo', 'lumo']
 manager.set_parent_folder(orm.load_node(PARENT_PK).outputs.remote_folder)
 
+# --8<-- [start:splitter]
 # The QP splitter: how many QP per run, how many runs at once, which QP.
 options = dict(MODES[MODE])
 if SPLIT_RESOURCES is not None:
-    options['resources'] = SPLIT_RESOURCES  # resources of the splitted runs (not of the first, full run)
+    options['resources'] = SPLIT_RESOURCES  # resources of the splitted runs only (not of the first run)
+if SPLIT_WALLTIME is not None:
+    options['max_wallclock_seconds'] = SPLIT_WALLTIME
+if SPLIT_PARALLELISM is not None:
+    options['parallelism'] = SPLIT_PARALLELISM
 manager.set_QP_subsets_dict(qp_per_subset=QP_PER_SUBSET, parallel_runs=PARALLEL_RUNS, **options)
+# --8<-- [end:splitter]
 
 # ---------------------------------------------------------------------------
 # 4. Scheduler options (see 01_gw_from_scratch.py)
