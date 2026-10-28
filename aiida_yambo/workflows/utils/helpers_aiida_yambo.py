@@ -9,10 +9,12 @@ from aiida.orm import load_node
 
 from aiida_yambo.utils.common_helpers import find_pw_parent, search_in_group, take_calc_from_remote
 from aiida_yambo.utils.parallelism_manager import ParallelismManager
+from aiida_yambo.utils.resource_rules import apply_resource_rules
 
 LOGGER = logging.getLogger(__name__)
 
-def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index: int, group, calc_type='qp') -> Tuple[Any, Dict[str, Any], Any, Any]:
+def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index: int, group, calc_type='qp',
+            resource_rules=None, resources_base=None) -> Tuple[Any, Dict[str, Any], Any, Any]:
     """
     Updates the YamboInputManager for a specific iteration step.
 
@@ -31,6 +33,8 @@ def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index
         index: The loop index tracking finishing concurrent submissions.
         group: AiiDA group where previous wfls are stored (for already-done detection).
         calc_type: 'qp', 'bse' or 'bse@qp' -> selects which namespace to converge.
+        resource_rules: the rules of the resources for given values of the parameters (see `utils/resource_rules.py`).
+        resources_base: the options of the steps at the start (`snapshot_base`), restored at each point before the rules.
         
     Returns:
         tuple: (input_manager, values_dict, already_done_pk, parent_nscf_node)
@@ -129,6 +133,10 @@ def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index
         ParallelismManager(input_manager, parallelism_instructions,
                            k_quantity=k_quantity, calc_type=calc_type).apply()
     
+    if resource_rules:
+        apply_resource_rules(input_manager, resource_rules, calc_type=calc_type,
+                             point_values=values_dict, base=resources_base)
+
     # 4. PARENT CORRELATION DEPENDENCY SEARCH
     already_done, parent_nscf, parent_scf = search_in_group(input_manager, group, calc_type=calc_type)
     

@@ -178,7 +178,7 @@ class TestApplication:
         assert 'X_ROLEs' not in variables
         resources = im.qp.metadata.options.resources.model_dump()
         assert resources['num_machines'] == 2
-        assert im.qp.metadata.options.prepend_text == 'export OMP_NUM_THREADS=1'
+        assert im.qp.metadata.options.prepend_text == 'export OMP_NUM_THREADS=1\n'
 
     def test_apply_false_when_nothing_matches(self):
         im = make_manager({'BndsRnXp': [[1, 50], '']}, arguments=['gw0'])

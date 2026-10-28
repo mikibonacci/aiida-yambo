@@ -18,9 +18,9 @@ from aiida_yambo.utils.common_helpers import (
 )
 # the new BaseModel manager for the inputs
 from aiida_yambo.utils.high_level_API.yambo_model import YamboInputManager
+from aiida_yambo.utils.resource_rules import snapshot_base, validate_resource_rules
 from aiida_yambo.workflows.utils.convergence import ConvergenceEvaluator
 from aiida_yambo.workflows.utils.helpers_aiida_yambo import take_quantities, updater
-from aiida_yambo.workflows.utils.helpers_workflow import build_parallelism_instructions
 from aiida_yambo.workflows.utils.helpers_yambowf import quantumespresso_input_validator
 from aiida_yambo.workflows.utils.parameters import ConvParam, CoupledConvParam, KpointMeshConvParam, ScanParam, load_parameter_space
 from aiida_yambo.workflows.yambowf import YamboWorkflow
@@ -175,7 +175,15 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             "parallelism_instructions", 
             valid_type=orm.Dict, 
             required=False,
-            help = 'indications for the parallelism to be used wrt values of the parameters.'
+            help = 'DEPRECATED, use `resource_rules`. Indications for the parallelism to be used wrt values of the parameters.'
+        )
+        spec.input(
+            "resource_rules",
+            valid_type=orm.List,
+            required=False,
+            validator=cls._validate_resource_rules,
+            help = 'resources (nodes, mpi, threads, walltime, queue, parallelism) to be used for given values of the parameters: '
+                   'a list of {"when": {...}, "for": [steps], "use": {...}}. See aiida_yambo.utils.resource_rules.'
         )
         spec.input(
             "group_label", 
@@ -225,6 +233,13 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                              message='The workchain failed because the space is too small.')                           
         spec.exit_code(400, 'CONVERGENCE_NOT_REACHED',
                              message='The workchain failed to reach convergence.')
+
+    @staticmethod
+    def _validate_resource_rules(value, _):
+        try:
+            validate_resource_rules(value.get_list())
+        except ValueError as exc:
+            return str(exc)
 
     @staticmethod
     def _validate_parameters_space(value, _):
@@ -472,10 +487,12 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         if not self.ctx.group.is_stored:
             self.ctx.group.store()
         
-        # here we add to the ctx the parallelism instructions, i.e. the parameter-dependent set of resources to be used.
+        # the options of the steps at the start: every point goes back to them before the resource rules are applied.
+        if self.ctx.input_manager.resource_rules:
+            self.ctx.resources_base = snapshot_base(self.ctx.input_manager)
         if self.ctx.input_manager.parallelism_instructions:
-            self.ctx.parallelism_instructions = build_parallelism_instructions(self.ctx.input_manager.parallelism_instructions,) 
-            
+            self.report('WARNING: `parallelism_instructions` is deprecated, use `resource_rules`.')
+
         self.report(
             "Workflow initilization step completed, the parameters will be: {}."
             .format(
@@ -805,6 +822,8 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                 evaluator=evaluator,
                 explicit_value=self.ctx.params_space, 
                 workflow_dict=self.ctx.input_manager.parallelism_instructions,
+                resource_rules=self.ctx.input_manager.resource_rules,
+                resources_base=self.ctx.get('resources_base'),
                 index=evaluator.concurrent_steps_count if evaluator.inquired_point is None else 0, # so if iteration = 1 and not finished, should start from evaluator.max_concurrent_steps+1
                 group=self.ctx.group,
                 calc_type=self.ctx.calc_type, 

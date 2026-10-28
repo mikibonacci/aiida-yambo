@@ -224,8 +224,11 @@ class YamboInputManagerTarget:
         for key, value in bundle.resources.items():
             setattr(options.resources, key, value)
         if 'num_cores_per_mpiproc' in bundle.resources:
-            options.prepend_text = 'export OMP_NUM_THREADS={}'.format(
-                bundle.resources['num_cores_per_mpiproc'])
+            # the rest of the prepend_text (modules, ...) is kept
+            kept = ''.join(line for line in (options.prepend_text or '').splitlines(keepends=True)
+                           if 'OMP_NUM_THREADS' not in line)
+            options.prepend_text = 'export OMP_NUM_THREADS={}\n'.format(
+                bundle.resources['num_cores_per_mpiproc']) + kept
         yambo_manager.metadata.options = options
         return True
 

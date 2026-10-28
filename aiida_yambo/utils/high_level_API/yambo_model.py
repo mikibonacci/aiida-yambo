@@ -220,7 +220,8 @@ class YamboInputManager(BaseModel): # TODO: maybe you can do the same for PwCalc
     # YamboConvergence:
     parameters_space: List[Union[ConvParam, CoupledConvParam, KpointMeshConvParam, ScanParam]] = []
     workflow_settings: dict = {}
-    parallelism_instructions: dict = None
+    parallelism_instructions: dict = None # deprecated, see resource_rules
+    resource_rules: list = None
     group_label: str = None
 
     @field_validator('parameters_space', mode='before')
