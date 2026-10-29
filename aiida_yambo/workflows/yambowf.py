@@ -53,6 +53,46 @@ def clean(node):
     if cleaned_calcs:
         return "cleaned remote folders of calculations: {}".format(', '.join(map(str, cleaned_calcs)))
 
+def clean_splitted_QP(splitted):
+    """Clean the remote folders of the calculations run by the splitted QP runs (nothing else).
+
+    `splitted` are the nodes of the splitted runs (`YamboRestart`). This is done by the workflow, in a step, once the
+    merge is done: the `clean_workdir` of a `BaseRestartWorkChain` cleans in `on_terminated`, where the transport
+    cannot be opened in the daemon. The folders are cleaned with one transport per computer.
+    Returns a message with the pk of the cleaned calculations, or None if there is nothing to clean.
+    """
+    remotes = []  # (pk, remote_folder)
+    for node in splitted:
+        for called_descendant in node.called_descendants:
+            if isinstance(called_descendant, orm.CalcJobNode):
+                try:
+                    remote = called_descendant.outputs.remote_folder
+                    if not remote.is_cleaned:
+                        remotes.append((called_descendant.pk, remote))
+                except Exception:  # no remote folder (e.g. the submission failed)
+                    continue
+
+    by_computer = {}
+    for pk, remote in remotes:
+        by_computer.setdefault(remote.computer.uuid, []).append((pk, remote))
+
+    cleaned_calcs = []
+    for group in by_computer.values():
+        try:
+            with group[0][1].get_authinfo().get_transport() as transport:
+                for pk, remote in group:
+                    try:
+                        remote._clean(transport=transport)  # pylint: disable=protected-access
+                        cleaned_calcs.append(pk)
+                    except Exception as exc:  # e.g. the folder is already gone
+                        LOGGER.warning('could not clean the remote folder of calculation %s: %s', pk, exc)
+        except Exception as exc:  # e.g. the connection to the computer
+            LOGGER.warning('could not connect to clean the splitted QP calculations: %s', exc)
+
+    if cleaned_calcs:
+        return 'cleaned remote folders of the splitted QP calculations: {}'.format(', '.join(map(str, cleaned_calcs)))
+
+
 def sanity_check_QP(v,c,input_db,output_db,create=True,max_correction_eV=5):
     """Replace the QP energies whose correction is larger than `max_correction_eV` with a linear fit
     (valence and conduction separately) of the reliable ones, and align the valence band maximum to zero."""
@@ -202,7 +242,8 @@ def set_QP_splitter_options(yambo_manager, QP_subsets_dict):
 
     `resources` is merged over the resources already set (a partial dictionary does not reset the other values to 1),
     `OMP_NUM_THREADS` follows `num_cores_per_mpiproc`, `max_wallclock_seconds` and `queue_name` are set if given, and
-    the remote folders of the splitted runs are cleaned unless `clean_workdir` is False.
+    the remote folders of the splitted runs are cleaned by the workflow after the merge (`clean_splitted_QP`) unless
+    `clean_workdir` is False: the runs themselves never clean (see `clean_splitted_QP`).
     """
     options = yambo_manager.metadata.options
     if 'resources' in QP_subsets_dict:
@@ -217,7 +258,7 @@ def set_QP_splitter_options(yambo_manager, QP_subsets_dict):
     if 'custom_scheduler_commands' in QP_subsets_dict:
         options.custom_scheduler_commands += QP_subsets_dict['custom_scheduler_commands']
     # NOTE: no AiiDA node here, generate_AiiDA_inputs creates it
-    yambo_manager.clean_workdir = QP_subsets_dict.get('clean_workdir', True)
+    yambo_manager.clean_workdir = False  # the workflow cleans the splitted runs, after the merge
 
 def set_auto_QP_parallelism(yambo_manager, subset, bands, occupied, kpoints, resources):
     """Set the parallelism of a splitted QP run with `find_parallelism_qp`, for the QP of its `subset`.
@@ -429,7 +470,7 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
                     '    prepend_text, custom_scheduler_commands : str\n'
                     '        added to the ones of the splitted runs (modules, #SBATCH lines...).\n'
                     '    clean_workdir : bool, default True\n'
-                    '        clean the remote folders of the splitted runs once finished.\n'
+                    '        clean the remote folders of the splitted runs (only those) after the merge.\n'
                     '    Unknown keys raise an error.\n'
                     '    extend_db : bool, default False\n'
                     '        if True, after the merge, run extend_QP() to build a scissored +\n'
@@ -1161,6 +1202,12 @@ class YamboWorkflow(ProtocolMixin, WorkChain):
         if BSE_map.get('missing_region', None) is not None and self.ctx.should_run_bse:
             self.report('The merged QP database does not contain {} states, exiting the workflow'.format(BSE_map['missing_region']))
             return self.exit_codes.ERROR_MISSING_BAND_REGION
+
+        # the splitted runs are merged: their remote folders are not needed anymore (not the ones of SCF, NSCF, QP)
+        if self.ctx.input_manager.QP_subsets_dict.get('clean_workdir', True):
+            message = clean_splitted_QP([load_node(uuid) for uuid in self.ctx.splitted_QP])
+            if message:
+                self.report(message)
 
         return
 

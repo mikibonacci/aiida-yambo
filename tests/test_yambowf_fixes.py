@@ -146,6 +146,35 @@ def test_run_post_process_missing_band_region(yambowf, monkeypatch, has_valence,
     assert result == ('MISSING' if fails else None)
 
 
+@pytest.mark.parametrize('qp_options, has_conduction, cleaned', [
+    ({}, True, True),  # the default: the splitted runs are cleaned after the merge
+    ({'clean_workdir': False}, True, False),
+    ({}, False, False),  # the run stops (missing band region): the splitted runs are kept to be inspected
+])
+def test_run_post_process_cleans_the_splitted_runs_after_the_merge(yambowf, monkeypatch, qp_options, has_conduction, cleaned):
+    fake_orm = SimpleNamespace(Str=lambda v: SimpleNamespace(value=v), Int=lambda v: SimpleNamespace(value=v),
+                               Dict=lambda dict=None: dict, List=lambda v: v)
+    merge_result = {'QP_db': 'QP_db', 'has_valence': SimpleNamespace(value=True),
+                    'has_conduction': SimpleNamespace(value=has_conduction)}
+    cleaned_nodes = []
+    monkeypatch.setattr(yambowf, 'orm', fake_orm)
+    monkeypatch.setattr(yambowf, 'store_List', lambda value: value)
+    monkeypatch.setattr(yambowf, 'merge_QP', lambda *args, **kwargs: merge_result)
+    monkeypatch.setattr(yambowf, 'QP_analyzer', lambda *args: {})
+    monkeypatch.setattr(yambowf, 'load_node', lambda uuid: SimpleNamespace(uuid=uuid, is_finished_ok=True))
+    monkeypatch.setattr(yambowf, 'clean_splitted_QP', lambda nodes: cleaned_nodes.extend(nodes) or 'cleaned')
+
+    wf = _workflow(splitted_QP=['a', 'b'], calc=SimpleNamespace(pk=1), mapping={}, should_run_bse=True,
+                   input_manager=SimpleNamespace(QP_subsets_dict={'extend_db': False, **qp_options}))
+    wf.inputs = {}
+    wf.out = lambda *args: None
+    wf.exit_codes = SimpleNamespace(ERROR_MISSING_BAND_REGION='MISSING', ERROR_SPLITTED_QP_FAILED='SPLIT')
+
+    yambowf.YamboWorkflow.run_post_process(wf)
+
+    assert [node.uuid for node in cleaned_nodes] == (['a', 'b'] if cleaned else [])
+
+
 def _parameter_space():
     fft = ConvParam('FFTGvecs', start=10, stop=30, delta=5, max=50, units='Ry', conv_thr=0.5)
     kpoints = KpointMeshConvParam(var='kpoint_density', start=0.5, stop=0.2, delta=-0.1, max=0.5, units='1/A', conv_thr=0.5)
@@ -346,10 +375,51 @@ def test_qp_splitter_sets_walltime_queue_and_cleaning(yambowf):
     yambowf.set_QP_splitter_options(qp, {'max_wallclock_seconds': 600, 'queue_name': 'short'})
     assert qp.metadata.options.max_wallclock_seconds == 600
     assert qp.metadata.options.queue_name == 'short'
-    assert qp.clean_workdir is True
+    assert qp.clean_workdir is False  # the splitted runs do not clean themselves: the workflow does, after the merge
 
-    yambowf.set_QP_splitter_options(qp, {'clean_workdir': False})
+    yambowf.set_QP_splitter_options(qp, {'clean_workdir': True})
     assert qp.clean_workdir is False
+
+
+def _splitted_calc(pk, cleaned=False, computer='c1', remote=True):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def transport():
+        yield 'transport-' + computer
+
+    remote_folder = SimpleNamespace(is_cleaned=cleaned, computer=SimpleNamespace(uuid=computer), _clean=MagicMock(),
+                                    get_authinfo=lambda: SimpleNamespace(get_transport=transport))
+    outputs = SimpleNamespace(remote_folder=remote_folder) if remote else SimpleNamespace()
+    node = MagicMock(spec=orm.CalcJobNode)
+    node.pk = pk
+    node.outputs = outputs
+    return node
+
+
+def test_clean_splitted_QP_cleans_only_what_it_is_given(yambowf):
+    first, second, done, missing = _splitted_calc(1), _splitted_calc(2), _splitted_calc(3, cleaned=True), _splitted_calc(4, remote=False)
+    other_computer = _splitted_calc(5, computer='c2')
+    splitted = [SimpleNamespace(called_descendants=[first, SimpleNamespace(pk=99), done]),
+                SimpleNamespace(called_descendants=[second, missing, other_computer])]
+    untouched = _splitted_calc(6)  # e.g. the NSCF or the QP: not a descendant of a splitted run
+
+    message = yambowf.clean_splitted_QP(splitted)
+
+    assert message == 'cleaned remote folders of the splitted QP calculations: 1, 2, 5'
+    first.outputs.remote_folder._clean.assert_called_once_with(transport='transport-c1')
+    other_computer.outputs.remote_folder._clean.assert_called_once_with(transport='transport-c2')
+    done.outputs.remote_folder._clean.assert_not_called()
+    untouched.outputs.remote_folder._clean.assert_not_called()
+
+
+def test_clean_splitted_QP_survives_a_failure_and_returns_none_if_nothing_cleaned(yambowf):
+    broken, fine = _splitted_calc(1), _splitted_calc(2)
+    broken.outputs.remote_folder._clean.side_effect = OSError('gone')
+
+    assert yambowf.clean_splitted_QP([SimpleNamespace(called_descendants=[broken, fine])]) == \
+        'cleaned remote folders of the splitted QP calculations: 2'
+    assert yambowf.clean_splitted_QP([SimpleNamespace(called_descendants=[])]) is None
 
 
 def test_qp_subsets_dict_validation(yambowf):

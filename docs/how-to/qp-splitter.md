@@ -86,7 +86,9 @@ manager.set_QP_subsets_dict(
 - `parallelism`: either a dictionary of Yambo variables (`{'SE_CPU': '1 4 2 1', 'SE_ROLEs': 'q qp b g'}`), or
   `'auto'`: for each subset the plugin distributes the MPI tasks (`find_parallelism_qp`) on the QP of the subset,
   and uses fewer tasks than the available ones if the subset is too small to feed them.
-- `clean_workdir` (default `True`): the remote folders of the splitted runs are cleaned when they finish.
+- `clean_workdir` (default `True`): the remote folders of the splitted runs, and only those, are cleaned by the workflow once
+  the merge is done (the SCF, NSCF and the QP run it starts from are kept). If a splitted run fails, or the run stops
+  because the merged database lacks bands, nothing is cleaned, so the runs can be inspected.
 
 Some rules of thumb. They are heuristics, check them on a small case:
 

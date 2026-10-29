@@ -35,7 +35,7 @@ the `ndb.QP` databases (`yambopy mergeqp`, which must be available where the wor
 | `explicit` | List of `[k1, k2, b1, b2]` ranges. |
 | `consider_only` | Keep only these bands. |
 | `parallelism` | `'auto'` (the plugin distributes the MPI tasks on the QP of each run) or a dictionary of yambo variables, for the splitted runs. |
-| `resources`, `max_wallclock_seconds`, `queue_name`, `prepend_text`, `custom_scheduler_commands`, `clean_workdir` | Resources (the values not given are kept), walltime, queue, scheduler text and cleaning of the splitted runs. |
+| `resources`, `max_wallclock_seconds`, `queue_name`, `prepend_text`, `custom_scheduler_commands`, `clean_workdir` | Resources (the values not given are kept), walltime, queue, scheduler text and cleaning of the splitted runs (after a successful merge; only those folders). |
 | `extend_db` | Also build an extended QP database (scissor plus Fermi-Dirac smearing); extra keys `Nb`, `T_smearing`, `consider_only`. |
 
 Give exactly one of `boundaries`, `range_QP`, `explicit` (more than one, or an unknown key, raises an error; with none, all the bands of all the k-points are used). All the modes are explained in [the QP splitter how-to](../how-to/qp-splitter.md). After the merge, outputs `merged_QP` and (if requested)
