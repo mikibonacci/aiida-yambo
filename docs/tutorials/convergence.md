@@ -44,7 +44,31 @@ run = submit(YamboConvergence,
 
 For BSE target `lowest_exciton` and use `manager.bse.set_BSENb(...)`; for BSE@GW use `calc_type='bse@qp'` and configure `manager.set_QP_subsets_dict(...)` first.
 
-The `start`, `stop`, and `delta` values define the initial grid. `max` prevents the algorithm from exploring unreasonably expensive calculations, while `conv_thr` defines the tolerance in the observable's units. Start with a small grid for a test run, then widen it for production.
+The `start`, `stop`, and `delta` values define the initial grid. `max` prevents the algorithm from exploring unreasonably expensive calculations, while `conv_thr` is the tolerance: by default (`conv_thr_units='%'`) it is a percentage of the converged value, and with `conv_thr_units='eV'` an absolute value in eV. Start with a small grid for a test run, then widen it for production.
+
+## The fit function (default: power law)
+
+For each parameter the workflow fits a function to the results and takes as converged value the point where the fit
+is flat within `conv_thr`. Unless you choose otherwise, this function is a **power law** `a / x**alpha + b` for one
+variable (the exponents `alpha = 1, 2, 3` are tried and the best fit is kept), and the product of two power laws for a
+`CoupledConvParam` (`alpha` for the first variable and `beta` for the second, `1, 2` each). To use another function,
+for example an exponential, or to restrict the exponents, set it on the parameter:
+
+```python
+ConvParam('FFTGvecs', start=10, stop=30, delta=5, max=50, units='Ry', conv_thr=0.5, fit_function='exponential')
+CoupledConvParam(['BndsRnXp', 'NGsBlkXp'], ..., fit_function='power_law', fit_options={'alphas': [1, 2], 'betas': [1]})
+```
+
+The list of the built-in functions, what the exponents are and how to add your own are in
+[Choose the fit function](../how-to/convergence-fit-functions.md). The fit belongs to the convergence only.
+
+## Fixed points instead of a convergence
+
+If you only need to run a list of parameter sets (tests, or data for your own analysis), give `scan_points` instead
+of `convergence_parameters`: nothing is fitted or converged, the points are just computed. See
+[Run fixed points (scan)](../how-to/scan-points.md).
+
+## Read the results
 
 ```python
 import pandas as pd

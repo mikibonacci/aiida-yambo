@@ -84,7 +84,8 @@ nav:
       - Split the GW calculation (QP splitter): how-to/qp-splitter.md
       - Resources and parallelism: how-to/resources.md
       - Analyse the databases with yambopy: how-to/yambopy-interface.md
-      - Scan values and choose fits: how-to/convergence-scan-and-fits.md
+      - Choose the fit function (convergence): how-to/convergence-fit-functions.md
+      - Run fixed points (scan, no convergence): how-to/scan-points.md
       - Restarts and troubleshooting: how-to/restarts-and-troubleshooting.md
       - Recipes: how-to/recipes.md
   - Examples: examples.md

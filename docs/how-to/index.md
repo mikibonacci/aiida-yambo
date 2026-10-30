@@ -36,10 +36,17 @@ Concise recipes for common operational tasks. They assume that the installation 
 
     [Restarts and troubleshooting](restarts-and-troubleshooting.md)
 
--   **Control the convergence workflow**
+-   **Choose the fit function of the convergence**
 
-    Run a list of parameter sets without convergence, and choose or write the fit function.
+    The built-in fit functions (default: power law), what `alpha` and `beta` are, how to choose them per
+    parameter, and how to write your own. Only for the automated convergence.
 
-    [Scan values and choose fits](convergence-scan-and-fits.md)
+    [Fit functions](convergence-fit-functions.md)
+
+-   **Run fixed points (scan)**
+
+    Run a list of parameter sets without convergence and without any fit.
+
+    [Scan](scan-points.md)
 
 </div>
