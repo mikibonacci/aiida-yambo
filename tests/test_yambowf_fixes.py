@@ -240,6 +240,18 @@ def test_sanity_check_qp_without_enough_conduction_states(yambowf, tmp_path):
         assert fixed.QP_E[3, 0] == pytest.approx(eo[3] + 1.0 - 0.11)  # left untouched (only aligned)
 
 
+def test_sanity_check_qp_with_degenerate_dft_energies(yambowf, tmp_path):
+    """All the reliable valence states at the same energy (0): no line can be fitted, it was a LinAlgError."""
+    eo = [0.0, 0.0, 0.5, 0.6, 0.7]
+    qp_e = [0.0, 0.0, 0.51, 0.62, 0.73]
+    _write_qp_db(tmp_path / 'in.nc', eo, qp_e)
+
+    _, fit_v, fit_c = yambowf.sanity_check_QP(2, 3, str(tmp_path / 'in.nc'), str(tmp_path / 'out.nc'))
+
+    assert fit_v == pytest.approx([1.0, 0.0])  # rigid shift: the correction is zero
+    assert fit_c is not None
+
+
 def test_sanity_check_qp_threshold_is_configurable(yambowf, tmp_path):
     eo = [0.0, 0.1, 0.5, 0.6, 0.7]
     _write_qp_db(tmp_path / 'in.nc', eo, [e + 0.01 for e in eo])

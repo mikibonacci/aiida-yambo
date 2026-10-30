@@ -93,6 +93,22 @@ def clean_splitted_QP(splitted):
         return 'cleaned remote folders of the splitted QP calculations: {}'.format(', '.join(map(str, cleaned_calcs)))
 
 
+def _linear_fit(x, y):
+    """Fit ``y = a*x + b`` and return ``[a, b]``, or None with fewer than 2 points.
+
+    If all the ``x`` are equal (for example the degenerate states at the valence band maximum, all at 0 eV, which is
+    what a small QP selection gives) a line is not defined and ``np.polyfit`` fails with ``LinAlgError``: then the
+    energies are rigidly shifted, ``a = 1`` and ``b`` the mean correction.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if len(x) < 2:
+        return None
+    if np.ptp(x) == 0:
+        return np.array([1.0, float(np.mean(y - x))])
+    return np.polyfit(x, y, deg=1)
+
+
 def sanity_check_QP(v,c,input_db,output_db,create=True,max_correction_eV=5):
     """Replace the QP energies whose correction is larger than `max_correction_eV` with a linear fit
     (valence and conduction separately) of the reliable ones, and align the valence band maximum to zero."""
@@ -105,8 +121,9 @@ def sanity_check_QP(v,c,input_db,output_db,create=True,max_correction_eV=5):
 
     #fix with a fit
     # a linear fit requires at least 2 points; if the band region is missing we return None for the fit.
-    fit_v = np.polyfit(d.QP_Eo[v_cond[0]],d.QP_E[v_cond[0],0],deg=1) if len(v_cond[0]) >= 2 else None
-    fit_c = np.polyfit(d.QP_Eo[c_cond[0]],d.QP_E[c_cond[0],0],deg=1) if len(c_cond[0]) >= 2 else None
+    # With all equal DFT energies the fit is a rigid shift (see _linear_fit).
+    fit_v = _linear_fit(d.QP_Eo[v_cond[0]].values, d.QP_E[v_cond[0],0].values)
+    fit_c = _linear_fit(d.QP_Eo[c_cond[0]].values, d.QP_E[c_cond[0],0].values)
     for i in wrong[0]:
         LOGGER.info('QP energy of band %s: DFT %s eV, QP %s eV', int(d.QP_table[0,i]), d.QP_Eo[i].data*units.Ha, d.QP_E[i,0].data*units.Ha)
         if d.QP_table[0,i]>v:
