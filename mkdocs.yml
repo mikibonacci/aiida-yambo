@@ -1,8 +1,10 @@
 site_name: aiida-yambo
 site_description: AiiDA workflows for YAMBO many-body perturbation theory
-site_url: https://yambo-code.github.io/yambo-aiida/
-repo_url: https://github.com/yambo-code/yambo-aiida
-repo_name: yambo-code/yambo-aiida
+# The URLs come from the environment, so the same file builds the site of any fork (the GitHub workflow sets them from
+# the repository it runs in); the defaults are the upstream ones, for a local build.
+site_url: !ENV [SITE_URL, 'https://yambo-code.github.io/yambo-aiida/']
+repo_url: !ENV [REPO_URL, 'https://github.com/yambo-code/yambo-aiida']
+repo_name: !ENV [REPO_NAME, 'yambo-code/yambo-aiida']
 docs_dir: docs
 theme:
   name: material
@@ -101,4 +103,4 @@ nav:
       - Convergence parameters: reference/convergence-parameters.md
       - Retrieved files and settings: reference/retrieved-files.md
       - Internal calculation layers: reference/internal-layers.md
-      - Changelog: https://github.com/yambo-code/yambo-aiida/releases
+      - Changelog: !ENV [RELEASES_URL, 'https://github.com/yambo-code/yambo-aiida/releases']
