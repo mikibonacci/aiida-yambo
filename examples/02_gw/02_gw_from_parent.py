@@ -25,12 +25,12 @@ load_profile()
 # ---------------------------------------------------------------------------
 # 1. Settings: edit them
 # ---------------------------------------------------------------------------
-YAMBO_CODE = 'yambo@mycluster'
-P2Y_CODE = 'p2y@mycluster'
-PW_CODE = 'pw@mycluster'
+YAMBO_CODE = 'yambo-5.3.0-gcc@corvina-direct'
+P2Y_CODE = 'p2y-5.3.0-gcc@corvina-direct'
+PW_CODE = 'qe-7.5-gcc-spack@corvina-direct'
 PSEUDO_FAMILY = 'PseudoDojo/0.4/PBE/SR/standard/upf'
 PARENT_KIND = 'nscf'  # 'scf', 'nscf' or 'yambo': only for your reference, the workflow detects it
-PARENT_PK = 1234  # pk of the finished parent (it must have a `remote_folder` output)
+PARENT_PK = 39838  # pk of the finished parent (it must have a `remote_folder` output)
 KMESH = [2, 2, 2]  # must be the mesh of the parent, if it is an NSCF or a Yambo run
 NSCF_NBND = 76
 QP_NB = 75

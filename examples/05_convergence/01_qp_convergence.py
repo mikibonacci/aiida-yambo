@@ -23,9 +23,9 @@ load_profile()
 # ---------------------------------------------------------------------------
 # 1. Settings: edit them
 # ---------------------------------------------------------------------------
-YAMBO_CODE = 'yambo@mycluster'
-P2Y_CODE = 'p2y@mycluster'
-PW_CODE = 'pw@mycluster'
+YAMBO_CODE = 'yambo-5.3.0-gcc@corvina-direct'
+P2Y_CODE = 'p2y-5.3.0-gcc@corvina-direct'
+PW_CODE = 'qe-7.5-gcc-spack@corvina-direct'
 PSEUDO_FAMILY = 'PseudoDojo/0.4/PBE/SR/standard/upf'
 GROUP_LABEL = 'convergence/silicon/qp'  # the calculations are kept here, and reused if you run again
 WHAT = ['gap_']  # the quantity to converge: 'gap_' (indirect), 'gap_GG', 'homo', 'lumo'...

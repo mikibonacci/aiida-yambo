@@ -66,15 +66,40 @@ def _build_params_space(parameters):
         return parameters.build_stepped_space()
     return parameters.build_diagonal_corners()
 
-def _max_bands(parameters_list):
-    """The largest number of bands the convergence parameters (`ConvParam` or `CoupledConvParam`) can reach."""
+def _max_bands(parameters_list, reach='max'):
+    """The largest number of bands the convergence parameters (`ConvParam` or `CoupledConvParam`) ask for.
+
+    `reach='max'`: the `max` of each parameter, the limit the algorithm may reach if the convergence needs it;
+    `reach='stop'`: the last value of the grid which is built (the `max` of the points for a scan).
+    """
     band_max = 0
     for parameters in parameters_list:
+        limit = getattr(parameters, 'stop', None) if reach == 'stop' else None
+        if limit is None:
+            limit = parameters.max
         for idx, var in enumerate(parameters.var):
             if 'bnd' in var.lower():
-                vmax = parameters.max[idx] if isinstance(parameters.max, list) else parameters.max
-                band_max = max(band_max, int(vmax))
+                value = limit[idx] if isinstance(limit, list) else limit
+                if value is not None:
+                    band_max = max(band_max, int(value))
     return band_max
+
+#: how the NSCF number of bands follows the bands of the parameters: see `YamboConvergence`, `bands_nscf_update`
+BANDS_NSCF_MODES = ('all-at-once', 'full-step')
+#: the NSCF is not run above this number of bands, unless `workflow_settings['max_nscf_bands']` says otherwise
+DEFAULT_MAX_NSCF_BANDS = 2000
+
+def check_bands_settings(settings):
+    """The error message if `bands_nscf_update` or `max_nscf_bands` of the `workflow_settings` are not valid, else None."""
+    mode = settings.get('bands_nscf_update', 'all-at-once')
+    is_integer = isinstance(mode, int) and not isinstance(mode, bool)
+    if not (mode in BANDS_NSCF_MODES or (is_integer and mode > 0)):
+        return (f"bands_nscf_update must be one of {BANDS_NSCF_MODES} or a positive integer (a cap on the NSCF bands), "
+                f"not {mode!r}.")
+    limit = settings.get('max_nscf_bands', DEFAULT_MAX_NSCF_BANDS)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        return f'max_nscf_bands must be a positive integer, not {limit!r}.'
+    return None
 
 def _get_convergence_thresholds(meta_parameters):
     """Convergence thresholds (in %) of the protocol.
@@ -169,7 +194,8 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             "workflow_settings", 
             valid_type=orm.Dict, 
             required=True,
-            help = 'settings for the workflow: type, quantities to be examinated...'
+            validator=cls._validate_workflow_settings,
+            help = 'settings for the workflow: type, quantities to be examinated, bands_nscf_update, max_nscf_bands...'
         )
         spec.input(
             "parallelism_instructions", 
@@ -231,8 +257,14 @@ class YamboConvergence(ProtocolMixin, WorkChain):
                              message='The workchain failed some calculations.')       
         spec.exit_code(303, 'SPACE_TOO_SMALL',
                              message='The workchain failed because the space is too small.')                           
+        spec.exit_code(304, 'TOO_MANY_BANDS',
+                             message='The NSCF would need more bands than allowed (`bands_nscf_update` as an integer, or `max_nscf_bands`).')
         spec.exit_code(400, 'CONVERGENCE_NOT_REACHED',
                              message='The workchain failed to reach convergence.')
+
+    @staticmethod
+    def _validate_workflow_settings(value, _):
+        return check_bands_settings(value.get_dict())
 
     @staticmethod
     def _validate_resource_rules(value, _):
@@ -374,6 +406,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         k_start = 1.0 / kd['start']                   # coarse distance (largest)
         k_stop = 1.0 / kd['stop']                     # fine distance (smallest)
         k_max = float(max(k_start, k_stop))           # coarse cap
+        k_min = min(1.0 / kd['max'], k_stop)          # fine cap: the most expensive mesh allowed
         k_delta = -(1.0 / kd['stop'] - 1.0 / (kd['stop'] + k_pseudo_step))
 
         # Getting information on the nelectrons, ecutwfc and volume
@@ -391,8 +424,10 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         # here the logic considers a ratio which depends on the dimensionality, or better on the volume:
         # if the volume is lower then 
         
-        volume_factor = np.log10(volume) # TODO: put the correct factor and describe it!!!
-        print('WARNING: still to fix the factor!!!!')
+        # The bands of the protocol are multiplied by log10 of the cell volume (Angstrom^3): the larger the cell, the
+        # more bands for the same energy range. It is a heuristic, not a fit: to use other numbers, override
+        # `meta_parameters['bands']` (start, stop, delta, max), which are multiplied by it.
+        volume_factor = np.log10(volume)
         bands = meta_parameters['bands'] if 'bands' in meta_parameters else meta_parameters['Nb'] # `Nb` is the old name
         b_start=bands['start']*volume_factor
         b_stop=bands['stop']*volume_factor
@@ -410,7 +445,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             ConvParam('FFTGvecs',                start=FFT_start,stop=FFT_stop,delta=FFT_delta,max=FFT_max,
                 steps=4,max_iterations=4,conv_thr=thresholds['FFTGvecs'],
                 conv_thr_units='%',convergence_algorithm='new_algorithm_1D', units='Ry'),
-            KpointMeshConvParam(var='kpoint_density', start=k_start, stop=k_stop, delta=k_delta, max=k_max,
+            KpointMeshConvParam(var='kpoint_density', start=k_start, stop=k_stop, delta=k_delta, max=k_max, min=k_min,
                 steps=k_steps,max_iterations=4,conv_thr=thresholds['kpoints'],
                 conv_thr_units='%',convergence_algorithm='new_algorithm_1D', units='1/A'),
             CoupledConvParam(var=['BndsRnXp','NGsBlkXp'], start=[b_start,G_start],
@@ -459,7 +494,7 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         self.ctx.hint = {}
         self.ctx.global_step = 0
         self.ctx.wfl_pk = []
-        self.ctx.bands_mode = self.ctx.input_manager.workflow_settings.get('bands_nscf_update', 0)
+        self.ctx.bands_mode = self.ctx.input_manager.workflow_settings.get('bands_nscf_update', 'all-at-once')
         self.ctx.none_encountered = False
 
         self.ctx.calc_type = 'bse' if len(self.ctx.input_manager.bse.parameters) > 0 else 'qp'
@@ -781,9 +816,13 @@ class YamboConvergence(ProtocolMixin, WorkChain):
             evaluator.concurrent_steps_count = evaluator.parameters.steps - 1
 
         # Anticipate max bands for p2y decision (ceiling over remaining + current)
-        self.ctx.max_bands_needed = _max_bands(list(self.ctx.input_manager.parameters_space) + [evaluator.parameters])
+        self.ctx.max_bands_needed = self._capped_nscf_bands(self._nscf_bands_for(evaluator))
 
         self.report(f'Prepared grid with {len(self.ctx.params_space)} points, max_bands_needed={self.ctx.max_bands_needed}')
+        exit_code = self._check_nscf_bands(evaluator)
+        if exit_code:
+            self._emit_story_outputs()
+            return exit_code
 
         # do we need a preliminary calculation? We decide here, so the `p2y_needed` predicate stays pure.
         self.ctx.run_p2y = self._evaluate_p2y_needed()
@@ -1293,12 +1332,50 @@ class YamboConvergence(ProtocolMixin, WorkChain):
     def _capped_nscf_bands(self, required_bands):
         """Apply `bands_nscf_update` to the number of bands to be computed in the NSCF.
 
-        An integer N > 0 caps the number of bands to N; 0 and the string modes ('all-at-once', 'full-step', ...) do not cap.
+        An integer N > 0 caps the number of bands to N; the string modes do not cap.
         """
         mode = self.ctx.bands_mode
         if isinstance(mode, int) and not isinstance(mode, bool) and mode > 0 and required_bands > 0:
             return min(required_bands, mode)
         return required_bands
+
+    def _nscf_bands_for(self, evaluator):
+        """The bands the NSCF is computed with, following `bands_nscf_update`:
+
+        - `'all-at-once'`: the largest of the grids of all the parameters (their `stop`), so that the NSCF is done once;
+        - `'full-step'`: the largest of the grid of the parameter which is being converged now;
+        - an integer N: as `'all-at-once'`, but never more than N.
+
+        If a grid shifts to larger values during the convergence, the NSCF is computed again with more bands.
+        """
+        if self.ctx.bands_mode == 'full-step':
+            return _max_bands([evaluator.parameters], reach='stop')
+        return _max_bands(list(self.ctx.input_manager.parameters_space) + [evaluator.parameters], reach='stop')
+
+    def _check_nscf_bands(self, evaluator):
+        """Report the NSCF bands and stop if they are not allowed: exit code, or None.
+
+        Not allowed: more than the integer of `bands_nscf_update` (Yambo would ask for bands which are not computed, after
+        the NSCF is done), or more than `max_nscf_bands` (the default is `DEFAULT_MAX_NSCF_BANDS`): raise it to confirm.
+        """
+        grid_bands = _max_bands([evaluator.parameters], reach='stop')
+        settings = self.ctx.input_manager.workflow_settings
+        limit = settings.get('max_nscf_bands', DEFAULT_MAX_NSCF_BANDS)
+        cap = self.ctx.bands_mode if isinstance(self.ctx.bands_mode, int) else None
+        nscf_bands = self.ctx.max_bands_needed
+        if nscf_bands:
+            self.report(f'The NSCF will be computed with {nscf_bands} bands (bands_nscf_update={self.ctx.bands_mode!r}, '
+                        f'the largest bands of the grid are {grid_bands}).')
+        if cap is not None and grid_bands > cap:
+            self.report(f'The grid of {", ".join(evaluator.parameters.var)} needs {grid_bands} bands, more than the {cap} '
+                        'of bands_nscf_update: raise it, or reduce the grid.')
+            return self.exit_codes.TOO_MANY_BANDS
+        if nscf_bands > limit:
+            self.report(f'The NSCF would need {nscf_bands} bands, more than max_nscf_bands={limit}. Reduce the bands of '
+                        'the parameters, use bands_nscf_update="full-step" or an integer cap, or confirm by setting '
+                        f'workflow_settings["max_nscf_bands"] to at least {nscf_bands}.')
+            return self.exit_codes.TOO_MANY_BANDS
+        return None
 
     def _evaluate_p2y_needed(self):
         """Determine whether a preliminary calculation is required before convergence."""
@@ -1397,8 +1474,8 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         try:
             band_max = getattr(self.ctx, 'max_bands_needed', 0)
             if not band_max:
-                band_max = _max_bands(list(self.ctx.input_manager.parameters_space) + [self.ctx.current_convergence.parameters])
-            # Respect `bands_nscf_update`: 0 means no cap, int caps, 'all-at-once' -> band_max
+                band_max = self._nscf_bands_for(self.ctx.current_convergence)
+            # `bands_nscf_update`: the integer caps (see `_nscf_bands_for`)
             required_nbnd = self._capped_nscf_bands(band_max)
             if required_nbnd and pre_manager.nscf.get_nbnd() < required_nbnd:
                 self.report(f"Raising NSCF nbnd to {required_nbnd} for bands convergence (was {pre_manager.nscf.get_nbnd()})")

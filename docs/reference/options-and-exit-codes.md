@@ -47,7 +47,7 @@ Give exactly one of `boundaries`, `range_QP`, `explicit` (more than one, or an u
 | --- | --- |
 | `ywfl` | The inputs of the `YamboWorkflow` run for every point. |
 | `parameters_space` | `List` of parameters (`ConvParam`, `CoupledConvParam`, `KpointMeshConvParam`), converged in order, or a single `ScanParam`. Validated when the process is submitted. |
-| `workflow_settings` | `type`: `'heavy'` (the converged values are used by the following parameters) or `'cheap'` (every parameter starts from the initial inputs); `what`: quantities to converge; `bands_nscf_update`: `'all-at-once'`/`'full-step'` (compute the NSCF with the largest number of bands needed), or an integer N > 0 to cap the number of bands at N; `skip_pre`: skip the p2y pre-calculation (debug). |
+| `workflow_settings` | `type`: `'heavy'` (the converged values are used by the following parameters) or `'cheap'` (every parameter starts from the initial inputs); `what`: quantities to converge; `bands_nscf_update`: how many bands the NSCF is computed with, see [Bands of the NSCF](convergence-parameters.md#bands-of-the-nscf); `max_nscf_bands`: the largest NSCF allowed (default 2000); `skip_pre`: skip the p2y pre-calculation (debug). |
 | `resource_rules` | `List` of rules `{'when': {...}, 'for': [steps], 'use': {...}}` giving the resources (nodes, MPI, threads, walltime, queue, parallelism) for given values of the parameters. Validated at submission; see [Resources](../how-to/resources.md). |
 | `parallelism_instructions` | Deprecated, use `resource_rules`. The old way of changing the parallelism with the parameter values. |
 | `group_label` | Group where all the calculations are kept and looked for to avoid repeating them (default: `convergence_tests_<formula>`). A calculation is reused only if it has the same structure, pseudopotentials, parameters and yambo variables. |
@@ -80,6 +80,7 @@ automatic restarts; `code_version` selects the naming of the parallelism variabl
 | 301 | `PRECALC_FAILED` | The p2y pre-calculation failed. |
 | 302 | `CALCS_FAILED` | A calculation failed (in a scan: *all* of them failed; a failed point of a scan is only flagged in `collection`). |
 | 303 | `SPACE_TOO_SMALL` | The grid has non-positive or out-of-bound values: change `start`/`stop`/`max`. |
+| 304 | `TOO_MANY_BANDS` | The NSCF would need more bands than `max_nscf_bands`, or than the integer of `bands_nscf_update`. |
 | 400 | `CONVERGENCE_NOT_REACHED` | `max_iterations` reached: raise it, loosen `conv_thr`, or widen the grid. |
 
 In all these cases `collection` and `convergence_summary` are returned.

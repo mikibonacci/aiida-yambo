@@ -81,6 +81,27 @@ def test_kpoint_spaces_and_round_trip():
     assert not ConvParam('x', start=1, stop=6, delta=1, max=5, units='').check_bounds()[0]
 
 
+def test_kpoint_density_min_is_the_finest_distance_allowed():
+    kwargs = dict(var='kpoint_density', start=.8, stop=.4, delta=-.2, max=.8, units='1/A')
+    density = KpointMeshConvParam(min=.3, **kwargs)
+
+    assert density.check_bounds()[0] and density.build_stepped_space() == pytest.approx([.8, .6667, .5333, .4], abs=1e-3)
+    # a window shifted finer than `min` is refused, as a grid beyond `max` is (SPACE_TOO_SMALL in the workflow)
+    shifted = density.with_shift(-.2, -.2)
+    assert shifted.min == .3 and shifted.build_stepped_space() == ['space_exceeds_max']
+    assert shifted.check_bounds()[0] is False
+    assert all(x >= .3 for x in KpointMeshConvParam(min=.3, **{**kwargs, 'stop': .3}).build_linear_space())
+    assert load_parameter_space([density.to_dict()])[0].min == .3
+    # no `min`: only positivity limits it, as before
+    assert KpointMeshConvParam(**kwargs).min is None
+    assert KpointMeshConvParam(min=.5, **kwargs).check_bounds()[0] is False  # the grid itself is finer than `min`
+    for change in ({'min': 0}, {'min': -1}):  # not positive
+        with pytest.raises(ValidationError):
+            KpointMeshConvParam(**{**kwargs, **change})
+    with pytest.raises(ValidationError):  # for a mesh the limit is `max`
+        KpointMeshConvParam(start=[2, 2, 2], stop=[4, 4, 4], delta=[1, 1, 1], max=[8, 8, 8], min=1.0, units='mesh')
+
+
 @pytest.fixture
 def restart_inputs(aiida_profile, aiida_localhost):
     from aiida import orm

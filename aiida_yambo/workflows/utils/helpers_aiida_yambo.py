@@ -77,12 +77,19 @@ def updater(input_manager, evaluator, explicit_value, workflow_dict: dict, index
             while isinstance(k_quantity, (tuple, list)) and len(k_quantity) == 1 and isinstance(k_quantity[0], (tuple, list)):
                 k_quantity = k_quantity[0]
 
-            k_quantity_shift = input_manager.nscf.get_mesh()[1]
+            # the NSCF has an explicit mesh only if one was set; with a `kpoints_distance` (the protocol) there is none:
+            # the shift of the new mesh is then the default one (Gamma centred).
+            try:
+                k_quantity_shift = input_manager.nscf.get_mesh()[1]
+            except (AttributeError, TypeError):
+                k_quantity_shift = [0, 0, 0]
 
             if isinstance(k_quantity, (tuple, list)):
                 input_manager.nscf.set_kmesh(k_quantity, k_quantity_shift, store=True)
             else:
                 input_manager.nscf.set_k_density(k_quantity, force_parity=False, store=True)
+            # `kpoints` and `kpoints_distance` are exclusive inputs of the PW workflow: the new mesh replaces the distance
+            (getattr(input_manager.nscf, '__pydantic_extra__', None) or {}).pop('kpoints_distance', None)
 
             # Safely flush remote parent folder context if swapping grid meshes to prevent errors
             if input_manager.parent_folder is not None:

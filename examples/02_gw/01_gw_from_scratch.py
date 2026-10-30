@@ -22,9 +22,9 @@ load_profile()
 # ---------------------------------------------------------------------------
 # 1. Settings: edit them
 # ---------------------------------------------------------------------------
-YAMBO_CODE = 'yambo@mycluster'
-P2Y_CODE = 'p2y@mycluster'
-PW_CODE = 'pw@mycluster'
+YAMBO_CODE = 'yambo-5.3.0-gcc@corvina-direct'
+P2Y_CODE = 'p2y-5.3.0-gcc@corvina-direct'
+PW_CODE = 'qe-7.5-gcc-spack@corvina-direct'
 PSEUDO_FAMILY = 'PseudoDojo/0.4/PBE/SR/standard/upf'  # norm-conserving: `aiida-pseudo install pseudo-dojo`
 KMESH = [2, 2, 2]  # tiny, to test
 NSCF_NBND = 76  # bands of the NSCF: it must be >= the bands used by Yambo (QP_NB)

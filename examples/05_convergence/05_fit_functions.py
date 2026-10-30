@@ -18,9 +18,9 @@ from aiida_yambo.workflows.yamboconvergence import YamboConvergence
 
 load_profile()
 
-YAMBO_CODE = 'yambo@mycluster'
-P2Y_CODE = 'p2y@mycluster'
-PW_CODE = 'pw@mycluster'
+YAMBO_CODE = 'yambo-5.3.0-gcc@corvina-direct'
+P2Y_CODE = 'p2y-5.3.0-gcc@corvina-direct'
+PW_CODE = 'qe-7.5-gcc-spack@corvina-direct'
 PSEUDO_FAMILY = 'PseudoDojo/0.4/PBE/SR/standard/upf'
 
 structure = orm.StructureData(ase=bulk('Si', 'diamond', a=5.43))
@@ -32,6 +32,9 @@ builder = YamboConvergence.get_builder_from_protocol(
     pw_code=orm.load_code(PW_CODE),
     pseudo_family=PSEUDO_FAMILY,
     calc_type='qp',
+    # The protocol grid of the bands is for real calculations (BndsRnXp up to thousands, multiplied by log10 of the cell
+    # volume): too large for a test, and the NSCF computes the largest of them. Here a small grid for silicon.
+    overrides={'meta_parameters': {'bands': {'start': 20, 'stop': 50, 'delta': 10, 'max': 60}}},
     # the default parameters (FFTGvecs, k-points density, coupled bands and cutoff) with their own fit functions
     fit_functions={
         'FFTGvecs': 'exponential',  # built-in 1D model: a * exp(-x / L) + b

@@ -22,11 +22,11 @@ load_profile()
 # ---------------------------------------------------------------------------
 # 1. Settings: edit them
 # ---------------------------------------------------------------------------
-PW_CODE = 'pw@mycluster'
+PW_CODE = 'qe-7.5-gcc-spack@corvina-direct'
 PSEUDO_FAMILY = 'PseudoDojo/0.4/PBE/SR/standard/upf'  # norm-conserving: `aiida-pseudo install pseudo-dojo`
 KMESH = [2, 2, 2]  # tiny, to test: use a denser mesh for production
 NSCF_NBND = 76  # the NSCF must contain all the bands the Yambo calculation will use
-SCF_PK = None  # None: submit the SCF. The pk of the finished SCF: submit the NSCF
+SCF_PK = 39768  # None: submit the SCF. The pk of the finished SCF: submit the NSCF
 
 # ---------------------------------------------------------------------------
 # 2. Structure (silicon, from ASE)

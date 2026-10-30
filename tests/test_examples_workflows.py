@@ -110,6 +110,19 @@ def test_the_scan_example_has_one_scan_parameter(environment):
     assert len(inputs['parameters_space'].get_list()) == 1
 
 
+def test_the_fit_functions_example_keeps_the_bands_small(environment):
+    """The protocol grid of the bands (thousands, times log10 of the volume) made the NSCF compute 3204 bands."""
+    from aiida_yambo.workflows.yamboconvergence import _max_bands
+
+    run_example('05_convergence/05_fit_functions.py', environment.settings)
+
+    (_, inputs), = environment.submitted
+    parameters = inputs['parameters_space'].get_list()
+    from aiida_yambo.workflows.utils.parameters import CoupledConvParam
+    coupled = [CoupledConvParam(**p) for p in parameters if len(p['var']) == 2]
+    assert coupled and _max_bands(coupled) < 200
+
+
 def test_the_offline_fit_example_runs_and_prefers_the_matching_model(tmp_path, monkeypatch, capsys):
     from aiida_yambo.workflows.utils.fit_models import unregister_fit_model
 

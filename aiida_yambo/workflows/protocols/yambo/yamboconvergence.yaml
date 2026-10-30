@@ -15,7 +15,6 @@ default_inputs:
             stop: 800
             delta: 100
             max: 2000
-            ratio: [10,25,50]
         G_vectors: 
             start: 6
             stop: 18
@@ -54,7 +53,6 @@ protocols:
                 'stop': 1000,
                 'delta': 100,
                 'max': 2000,
-                'ratio':[5,10,20],
             }
             G_vectors: {
                 'start': 6,
@@ -93,7 +91,6 @@ protocols:
                 'stop': 5000,
                 'delta': 200,
                 'max': 8000,
-                'ratio':[5,10,20],
             }
             G_vectors: {
                 'start': 10,

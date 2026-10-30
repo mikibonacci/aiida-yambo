@@ -190,3 +190,25 @@ def test_rules_add_prepend_text_and_scheduler_commands_to_the_base_without_accum
         options = manager.qp.metadata.options
         assert options.prepend_text == 'module load yambo\nulimit -s unlimited'
         assert options.custom_scheduler_commands == '#SBATCH --exclusive\n#SBATCH -C cpu'
+
+
+def test_updater_sets_a_mesh_when_the_nscf_has_only_a_kpoints_distance(aiida_profile, monkeypatch):
+    """The protocol gives `kpoints_distance`: the NSCF has no mesh to take the shift from (it was an AttributeError)."""
+    from types import SimpleNamespace
+
+    from aiida import orm
+    from ase.build import bulk
+
+    from aiida_yambo.workflows.utils import helpers_aiida_yambo as helpers
+    from aiida_yambo.workflows.utils.parameters import KpointMeshConvParam
+
+    monkeypatch.setattr(helpers, 'search_in_group', lambda *args, **kwargs: (False, None, None))
+    manager = make_manager()
+    manager.nscf.structure = orm.StructureData(ase=bulk('Si', 'diamond', a=5.43))
+    manager.nscf.kpoints_distance = orm.Float(0.3)
+    parameter = KpointMeshConvParam(start=[3, 3, 3], stop=[6, 6, 6], delta=[1, 1, 1], max=[10, 10, 10], units='mesh')
+
+    helpers.updater(manager, SimpleNamespace(parameters=parameter), [[4, 4, 4]], None, 0, None, calc_type='qp')
+
+    assert manager.nscf.get_mesh()[0] == [4, 4, 4] and manager.nscf.get_mesh()[1] == [0, 0, 0]
+    assert not hasattr(manager.nscf, 'kpoints_distance')

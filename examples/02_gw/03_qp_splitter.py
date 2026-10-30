@@ -30,11 +30,11 @@ load_profile()
 # ---------------------------------------------------------------------------
 # 1. Settings: edit them
 # ---------------------------------------------------------------------------
-YAMBO_CODE = 'yambo@mycluster'
-P2Y_CODE = 'p2y@mycluster'
-PW_CODE = 'pw@mycluster'
+YAMBO_CODE = 'yambo-5.3.0-gcc@corvina-direct'
+P2Y_CODE = 'p2y-5.3.0-gcc@corvina-direct'
+PW_CODE = 'qe-7.5-gcc-spack@corvina-direct'
 PSEUDO_FAMILY = 'PseudoDojo/0.4/PBE/SR/standard/upf'
-PARENT_PK = 1234  # a finished NSCF (or SCF, or Yambo run)
+PARENT_PK = 39915  # a finished NSCF (or SCF, or Yambo run)
 MODE = 'boundaries'
 KMESH = [2, 2, 2]
 NSCF_NBND = 76

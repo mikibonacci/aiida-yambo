@@ -2,7 +2,7 @@ import copy
 import itertools
 from builtins import max as builtins_max
 from math import isfinite
-from typing import List, Dict, Any, Union, Tuple, Literal
+from typing import List, Dict, Any, Optional, Union, Tuple, Literal
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
@@ -143,12 +143,13 @@ class KpointMeshConvParam(ConvParam):
                                    delta=[1, 1, 1], max=[22, 22, 22],
                                    units='mesh', conv_thr=10)
         dens = KpointMeshConvParam(var='kpoint_density', start=0.80, stop=0.20,
-                                   delta=-0.04, max=0.80, units='1/A', conv_thr=10)
+                                   delta=-0.04, max=0.80, min=0.10, units='1/A', conv_thr=10)
     """
     start: Union[List[Union[float, int]], float]
     stop: Union[List[Union[float, int]], float]
     delta: Union[List[Union[float, int]], float]
     max: Union[List[Union[float, int]], float]
+    min: Optional[float] = None  # only for kpoint_density: the smallest distance (finest mesh) allowed
 
     def __init__(self, var: Union[str, List[str]] = 'kpoint_mesh', **data):
         super().__init__(var=var, **data)
@@ -184,6 +185,12 @@ class KpointMeshConvParam(ConvParam):
             self._validate_axis(self.start, self.stop, self.delta, self.max, decreasing=True)
             if min(self.start, self.stop, self.max) <= 0:
                 raise ValueError('K-point distances must be positive.')
+            # not compared with 'stop' here: a window which is shifted finer than 'min' must stop the workflow cleanly
+            # (check_bounds, build_stepped_space), not raise
+            if self.min is not None and self.min <= 0:
+                raise ValueError(f"K-point density 'min' must be positive. Got min={self.min}.")
+        if is_mesh and self.min is not None:
+            raise ValueError("'min' is only for kpoint_density (a distance which decreases): for kpoint_mesh use 'max'.")
         return self
 
     def check_bounds(self) -> Tuple[bool, str]:
@@ -194,6 +201,8 @@ class KpointMeshConvParam(ConvParam):
                 return False, f"Variable {self.var[0]}: distances must be positive (start={self.start}, stop={self.stop})."
             if self.start > self.max:
                 return False, f"Variable {self.var[0]}: Start value ({self.start}) exceeds max ({self.max})."
+            if self.min is not None and self.stop < self.min:
+                return False, f"Variable {self.var[0]}: Stop value ({self.stop}) is finer than min ({self.min})."
             return True, "Valid"
         if any(s > m for s, m in zip(self.stop, self.max)):
             return False, f"Variable {self.var[0]}: Stop value ({self.stop}) exceeds max ({self.max})."
@@ -203,7 +212,7 @@ class KpointMeshConvParam(ConvParam):
         """Generates explicit list of mesh points or densities."""
         if self.var[0] == 'kpoint_density':
             space = np.linspace(self.start, self.stop, self.steps).tolist()
-            if max(space) > self.max or min(space) <= 0:
+            if max(space) > self.max or min(space) <= 0 or (self.min is not None and min(space) < self.min):
                 return ['space_exceeds_max']
             return space
         space = np.linspace(self.start, self.stop, self.steps, dtype=self.dtype).tolist()
@@ -217,7 +226,7 @@ class KpointMeshConvParam(ConvParam):
             # decreasing density: walk down from start; drop any non-positive
             # distance that would arise from a coarse delta overshooting 0.
             space = np.arange(self.start, self.stop + (self.delta / 2), self.delta).tolist()
-            return [x for x in space if x > 0]
+            return [x for x in space if x > 0 and (self.min is None or x >= self.min)]
         space = [
             [start] if delta == 0 else np.arange(start, stop + (delta / 2), delta, dtype=self.dtype).tolist()
             for start, stop, delta in zip(self.start, self.stop, self.delta)

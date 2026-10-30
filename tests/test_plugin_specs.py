@@ -23,6 +23,10 @@ def test_workflow_specs_have_required_ports(aiida_profile):
                               (YamboConvergence, {'ywfl', 'parameters_space'})):
         assert required <= set(process.spec().inputs)
 
+    yambo_spec = YamboWorkflow.spec()
+    assert yambo_spec.inputs['stop_if_metal'].non_db is True
+    assert yambo_spec.exit_codes.ERROR_METALLIC_SYSTEM.status == 303
+
 
 @pytest.mark.parametrize('process', [YamboCalculation, YppCalculation])
 def test_calcjob_protocol_defaults_are_stable(process):

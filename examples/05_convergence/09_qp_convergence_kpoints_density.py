@@ -3,8 +3,9 @@
 The parameter is a ``KpointMeshConvParam`` with ``var='kpoint_density'``. The values are k-point *distances* in 1/Angstrom,
 passed to ``set_kpoints_mesh_from_density`` of AiiDA: the mesh is built from the cell, so the same numbers work for any
 structure (and give anisotropic meshes for anisotropic cells). A refinement means a **smaller** distance: ``start`` is the
-coarsest (largest distance), ``stop`` the finest (smallest), ``delta`` is negative, and ``max`` is the largest distance
-allowed (the coarse cap). The fit is done on ``(1 / distance)**3``, proportional to the number of k-points.
+coarsest (largest distance), ``stop`` the finest (smallest), ``delta`` is negative, ``max`` is the largest distance
+allowed (the coarse cap) and ``min`` the smallest (the fine cap: the most expensive mesh you accept). If the convergence
+needs a finer mesh than ``min``, the workflow stops (exit code 303) instead of submitting it. The fit is done on ``(1 / distance)**3``, proportional to the number of k-points.
 
 It is the default k-point parameter of the protocol convergence. Use it when the same script must serve different
 structures; to fix the meshes exactly, see 08_qp_convergence_kpoints_mesh.py.
@@ -55,9 +56,9 @@ manager.qp.set_Nb(value=75)
 manager.qp.set_Gcut(value=1)
 manager.qp.set_variable('FFTGvecs', [20, 'Ry'])
 
-# distances 0.6, 0.5, 0.4, 0.3 (1/Angstrom): no distance larger than ``max`` is explored
+# distances 0.6, 0.5, 0.4, 0.3 (1/Angstrom): none larger than ``max`` or smaller than ``min`` is explored
 manager.parameters_space = [
-    KpointMeshConvParam(var='kpoint_density', start=0.6, stop=0.3, delta=-0.1, max=0.6,
+    KpointMeshConvParam(var='kpoint_density', start=0.6, stop=0.3, delta=-0.1, max=0.6, min=0.2,
                         units='1/A', conv_thr=CONV_THR, max_iterations=3, max_concurrent_steps=2),
 ]
 manager.workflow_settings = {'type': 'heavy', 'what': WHAT, 'bands_nscf_update': 'all-at-once', 'skip_pre': False}
