@@ -479,13 +479,13 @@ class YamboConvergence(ProtocolMixin, WorkChain):
         else:
             group_label = "convergence_tests_{}".format(self.ctx.input_manager.scf.structure.get_formula())
         try:
-            self.ctx.group = orm.load_group(group_label)
+            # by label: a label which looks like a pk or the start of a uuid is not taken for one
+            self.ctx.group = orm.load_group(label=group_label)
+            self.report('using the existing group: {} (pk {}, {} nodes)'.format(
+                group_label, self.ctx.group.pk, self.ctx.group.count()))
         except NotExistent:
-            self.ctx.group = Group(label=group_label)
-            self.report('creating group: {}'.format(group_label))
-        self.report('group: {}'.format(group_label))
-        if not self.ctx.group.is_stored:
-            self.ctx.group.store()
+            self.ctx.group = Group(label=group_label).store()
+            self.report('the group {} did not exist: created it (pk {})'.format(group_label, self.ctx.group.pk))
         
         # the options of the steps at the start: every point goes back to them before the resource rules are applied.
         if self.ctx.input_manager.resource_rules:

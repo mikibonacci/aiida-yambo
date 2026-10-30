@@ -127,3 +127,42 @@ def test_consumed_precalculation_is_forgotten(generate_workchain, yc_inputs):
         assert process.prepare_calculations() is None  # the next lap does not set the stale folder again
     finally:
         process.close()
+
+
+def _setup_with_group_label(generate_workchain, yc_inputs, label):
+    from aiida import orm
+    from aiida_yambo.workflows.yamboconvergence import YamboConvergence
+
+    process = generate_workchain(YamboConvergence, {**yc_inputs, 'group_label': orm.Str(label)})
+    reports = []
+    process.report = lambda message, *args: reports.append(message)
+    process.setup()
+    return process, reports
+
+
+@pytest.mark.parametrize('label', ['convergence/silicon/new', '123456', 'cafe'])
+def test_setup_creates_the_group_if_it_does_not_exist_and_reports_it(generate_workchain, yc_inputs, label):
+    from aiida import orm
+
+    process, reports = _setup_with_group_label(generate_workchain, yc_inputs, label)
+    try:
+        group = orm.load_group(label=label)
+        assert process.ctx.group.pk == group.pk and group.is_stored
+        assert any('did not exist: created it' in report and label in report for report in reports), reports
+    finally:
+        process.close()
+
+
+def test_setup_reuses_an_existing_group_and_reports_it(generate_workchain, yc_inputs):
+    from aiida import orm
+
+    existing = orm.Group(label='convergence/silicon/existing').store()
+    existing.add_nodes(orm.Int(1).store())
+
+    process, reports = _setup_with_group_label(generate_workchain, yc_inputs, 'convergence/silicon/existing')
+    try:
+        assert process.ctx.group.pk == existing.pk
+        assert any('using the existing group' in report and '1 nodes' in report for report in reports), reports
+        assert orm.Group.collection.find(filters={'label': 'convergence/silicon/existing'}).__len__() == 1
+    finally:
+        process.close()
