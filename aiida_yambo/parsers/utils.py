@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
+import os
 import re
 
 from yambopy.dbs.excitondb import YamboExcitonDB, YamboLatticeDB
@@ -254,10 +255,38 @@ def yambo_wrote_dbs(output_params):
 def get_yambo_version(report, output_params):
     pass
 
+def _exciton_db_without_table(filename, folder, lattice):
+    """The `YamboExcitonDB` of a `ndb.BS_diago_Q*` which does not contain the transitions table (`BS_TABLE`).
+
+    Yambo writes `BS_TABLE` (and the eigenvectors) in this database only if `WRbsWF` is requested; yambopy's
+    `from_db_file` requires it, but the energies, the residuals and the response function parsed here do not use it.
+    """
+    from netCDF4 import Dataset
+    from yambopy.units import I, ha2ev
+
+    with Dataset(os.path.join(folder, filename)) as database:
+        energies = database.variables['BS_Energies'][...].data * ha2ev
+        left = database.variables['BS_left_Residuals'][...].data
+        right = database.variables['BS_right_Residuals'][...].data
+        spin_vars = [int(value) for value in database.variables['SPIN_VARS'][:][:2]]
+        Lkind = None
+        if 'X_kind' in database.variables:
+            Lkind = ''.join(database.variables['X_kind'][0].astype(str)).strip()
+    return YamboExcitonDB(
+        lattice, filename.split('Q', 1)[1], energies[:, 0] + energies[:, 1] * I,
+        left[:, 0] + left[:, 1] * I, right[:, 0] + right[:, 1] * I,
+        spin_pol='pol' if spin_vars == [2, 1] else 'no', Lkind=Lkind)
+
+
 def parse_BS(folder,filename, save_dir):
     q = filename[13:]
     lat  = YamboLatticeDB.from_db_file(filename=save_dir+'/ns.db1')
-    ydb  = YamboExcitonDB.from_db_file(filename=filename,folder=folder,lattice=lat)
+    try:
+        ydb  = YamboExcitonDB.from_db_file(filename=filename,folder=folder,lattice=lat)
+    except KeyError as error:
+        if error.args != ('BS_TABLE',):
+            raise
+        ydb = _exciton_db_without_table(filename, folder, lat)
     chi = ydb.get_chi(emin=0, emax=20, estep=0.01, broad=0.15,)
     chi_ = {'eV':chi[0],'eps_2':chi[1].imag,'eps_1':chi[1].real}
     
