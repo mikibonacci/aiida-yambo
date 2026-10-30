@@ -34,6 +34,8 @@ process specifications by the tests of this repository (nothing is run), not yet
 | `05_convergence/05_fit_functions.py` | choose the fit function of each parameter | tested |
 | `05_convergence/06_fit_models_offline.py` | write and test a fit model on data, no cluster | runs anywhere |
 | `05_convergence/07_resource_rules.py` | resources which depend on the values of the parameters | tested |
+| `05_convergence/08_qp_convergence_kpoints_mesh.py` | convergence of a GW gap with the k-point mesh | tested |
+| `05_convergence/09_qp_convergence_kpoints_density.py` | convergence of a GW gap with the k-point density (distance) | tested |
 | `06_low_level/01_p2y.py` ... `04_yambo_restart.py` | one `YamboCalculation` (p2y, GW, IP-RPA) and `YamboRestart` | rewritten from old scripts, tested |
 | `07_analysis/01_read_workflow_results.py` | read the outputs of a workflow (parameters, QP, spectrum) | tested |
 | `07_analysis/02_read_convergence_results.py` | read the story of a convergence as a table, plot it | tested |

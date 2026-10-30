@@ -42,6 +42,8 @@ RUNS = [
     ('05_convergence/04_scan.py', {}),
     ('05_convergence/05_fit_functions.py', {}),
     ('05_convergence/07_resource_rules.py', {}),
+    ('05_convergence/08_qp_convergence_kpoints_mesh.py', {}),
+    ('05_convergence/09_qp_convergence_kpoints_density.py', {}),
     ('04_options/01_resources_and_parallelism.py', {'QUEUE': 'debug', 'ACCOUNT': 'project'}),
 ] + [('02_gw/03_qp_splitter.py', {'MODE': mode}) for mode in
      ['boundaries', 'k_range', 'range_QP', 'full_bands', 'explicit', 'extend_db']]
