@@ -98,6 +98,7 @@ nav:
       - Workflows: reference/workflows.md
       - Outputs and parsed quantities: reference/outputs.md
       - Options and exit codes: reference/options-and-exit-codes.md
+      - Convergence parameters: reference/convergence-parameters.md
       - Retrieved files and settings: reference/retrieved-files.md
       - Internal calculation layers: reference/internal-layers.md
       - Changelog: https://github.com/yambo-code/yambo-aiida/releases

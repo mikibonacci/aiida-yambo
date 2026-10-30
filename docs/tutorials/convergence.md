@@ -44,7 +44,7 @@ run = submit(YamboConvergence,
 
 For BSE target `lowest_exciton` and use `manager.bse.set_BSENb(...)`; for BSE@GW use `calc_type='bse@qp'` and configure `manager.set_QP_subsets_dict(...)` first.
 
-The `start`, `stop`, and `delta` values define the initial grid. `max` prevents the algorithm from exploring unreasonably expensive calculations, while `conv_thr` is the tolerance: by default (`conv_thr_units='%'`) it is a percentage of the converged value, and with `conv_thr_units='eV'` an absolute value in eV. Start with a small grid for a test run, then widen it for production.
+The `start`, `stop`, and `delta` values define the initial grid. `max` prevents the algorithm from exploring unreasonably expensive calculations, while `conv_thr` is the tolerance: by default (`conv_thr_units='%'`) it is a percentage of the converged value, and with `conv_thr_units='eV'` an absolute value in eV. All the options are listed in [Convergence parameters](../reference/convergence-parameters.md). Start with a small grid for a test run, then widen it for production.
 
 ## The fit function (default: power law)
 

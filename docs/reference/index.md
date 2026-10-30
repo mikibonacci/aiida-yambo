@@ -29,4 +29,10 @@ Use the reference pages when you already know which calculation you want to run 
 
     [Options and exit codes](options-and-exit-codes.md)
 
+-   **Convergence parameters**
+
+    `ConvParam`, `CoupledConvParam`, `KpointMeshConvParam`: every option, `conv_thr` and `conv_thr_units`.
+
+    [Convergence parameters](convergence-parameters.md)
+
 </div>
