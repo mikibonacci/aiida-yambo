@@ -17,6 +17,7 @@ from aiida.orm import RemoteData, BandsData, ArrayData
 
 from aiida.plugins import DataFactory, CalculationFactory
 
+from aiida_yambo.data import YamboExcitonData, YamboLatticeData
 from aiida_yambo.utils.common_helpers import take_calc_from_remote
 
 from yambopy.io.inputfile import YamboIn
@@ -28,6 +29,41 @@ __authors__ = " Miki Bonacci (miki.bonacci@unimore.it)," \
               " Gianluca Prandini (gianluca.prandini@epfl.ch)," \
               " Antimo Marrazzo (antimo.marrazzo@epfl.ch)," \
               " Michael Atambo (michaelontita.atambo@unimore.it)."
+
+
+# the databases which are retrieved only temporarily (to be parsed), see the settings KEEP_RAW_DBS
+_TEMPORARY_DBS = ('ns.db1', 'ndb.BS_diago_Q*', 'ndb.HF_and_locXC')
+
+
+def additional_retrieve_entries(additional):
+    """The entries of the setting `ADDITIONAL_RETRIEVE_LIST`: a list of paths (or patterns) in the working directory of
+    the remote computer, or `[remote_path, local_name, depth]` (as in `CalcInfo.retrieve_list`). They are stored."""
+    if not isinstance(additional, (list, tuple)):
+        raise InputValidationError("ADDITIONAL_RETRIEVE_LIST must be a list of paths")
+    for entry in additional:
+        valid_string = isinstance(entry, str)
+        valid_triple = (isinstance(entry, (list, tuple)) and len(entry) == 3 and isinstance(entry[0], str)
+                        and isinstance(entry[1], str) and isinstance(entry[2], int))
+        if not (valid_string or valid_triple):
+            raise InputValidationError(
+                f"ADDITIONAL_RETRIEVE_LIST: {entry!r} is not a path or a [remote_path, local_name, depth] list")
+    return list(additional)
+
+
+def split_retrieve_list(paths, keep_raw_dbs=False):
+    """Split the files to retrieve in the ones stored in the `retrieved` folder and the temporary ones.
+
+    The raw databases `ns.db1`, `ndb.BS_diago_Q*` and `ndb.HF_and_locXC` are only used by the parser (which keeps what
+    is needed as `YamboLatticeData`, `YamboExcitonData` and arrays): they are retrieved temporarily unless
+    `keep_raw_dbs` (setting `KEEP_RAW_DBS`). The other entries (also the ones which are not strings) are stored.
+    """
+    permanent, temporary = [], []
+    for path in paths:
+        if isinstance(path, str) and not keep_raw_dbs and os.path.basename(path) in _TEMPORARY_DBS:
+            temporary.append(path)
+        else:
+            permanent.append(path)
+    return permanent, temporary
 
 
 class YamboCalculation(CalcJob):
@@ -137,6 +173,10 @@ class YamboCalculation(CalcJob):
                 required=False, help='returns some system information after a p2y')
         spec.output('QP_db', valid_type=SingleFileData,
                 required=False, help='returns the singlefiledata for ndbQP')
+        spec.output('lattice', valid_type=YamboLatticeData,
+                required=False, help='the lattice (ns.db1) of the calculation, for yambopy: see YamboLatticeData')
+        spec.output_namespace('exciton_db', valid_type=YamboExcitonData, required=False, dynamic=True,
+                help='the excitons of a BSE calculation, one node per Q point (Q1, Q2...): see YamboExcitonData')
 
 
     def prepare_for_submission(self, tempfolder):
@@ -180,6 +220,20 @@ class YamboCalculation(CalcJob):
                 raise InputValidationError("T_VERBOSE must be " " a boolean")
         
         iteration = settings.pop('ITERATION', None)
+
+        # the databases yambopy reads are parsed from a temporary folder and kept as YamboLatticeData and
+        # YamboExcitonData; these settings are used here (the raw files) and by the parser (the eigenvectors)
+        keep_raw_dbs = settings.pop('KEEP_RAW_DBS', False)
+        if not isinstance(keep_raw_dbs, bool):
+            raise InputValidationError("KEEP_RAW_DBS must be a boolean")
+        store_eigenvectors = settings.pop('STORE_EXCITON_EIGENVECTORS', False)
+        if not isinstance(store_eigenvectors, bool):
+            raise InputValidationError("STORE_EXCITON_EIGENVECTORS must be a boolean")
+        number_of_eigenvectors = settings.pop('N_EXCITON_EIGENVECTORS', None)
+        if number_of_eigenvectors is not None and (
+                not isinstance(number_of_eigenvectors, int) or isinstance(number_of_eigenvectors, bool)
+                or number_of_eigenvectors < 1):
+            raise InputValidationError("N_EXCITON_EIGENVECTORS must be a positive integer")
 
         parameters = self.inputs.parameters
 
@@ -316,9 +370,7 @@ class YamboCalculation(CalcJob):
                 if dbs in params_dict['arguments']:
                     extra_retrieved.append('aiida.out/'+_dbs_accepted[dbs])
 
-        additional = settings.pop('ADDITIONAL_RETRIEVE_LIST',[])
-        if additional:
-            extra_retrieved.append(additional)
+        extra_retrieved.extend(additional_retrieve_entries(settings.pop('ADDITIONAL_RETRIEVE_LIST', [])))
 
         from aiida.common.datastructures import CodeRunMode, CodeInfo
 
@@ -383,7 +435,7 @@ class YamboCalculation(CalcJob):
             calcinfo.codes_info = [c1, c2, c3]
         
         #if not parent_save_path: extra_retrieved.append('SAVE/ns.db1')
-        extra_retrieved.append('SAVE/ns.db1') #then always delete it? but how? TODO
+        extra_retrieved.append('SAVE/ns.db1')  # the lattice, for the parser (retrieved temporarily, see split_retrieve_list)
 
         calcinfo.codes_run_mode = CodeRunMode.SERIAL
         
@@ -393,8 +445,9 @@ class YamboCalculation(CalcJob):
                 "the settings input node, but were not understood: {}".format(
                     ",".join(list(settings.keys()))))
 
-        for extra in extra_retrieved:
-            calcinfo.retrieve_list.append(extra)
+        permanent, temporary = split_retrieve_list(extra_retrieved, keep_raw_dbs)
+        calcinfo.retrieve_list.extend(permanent)
+        calcinfo.retrieve_temporary_list = temporary
 
         return calcinfo
 

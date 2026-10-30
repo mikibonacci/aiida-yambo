@@ -8,9 +8,15 @@ These are short interventions after a workflow has been created with `YamboInput
 from aiida import orm
 
 node = orm.load_node(PK)
-retrieved_path = node.outputs.retrieved._repository._repo_folder.abspath
+retrieved = node.outputs.retrieved
+retrieved.list_object_names()                      # the stored files
+retrieved.get_object_content('r-aiida.out_...')    # one of them (the names of the reports and logs depend on the run)
 remote_path = node.outputs.remote_folder.get_remote_path()
 ```
+
+The raw databases (`ns.db1`, `ndb.BS_diago_Q*`, `ndb.HF_and_locXC`) are in `retrieved` only with the setting
+`KEEP_RAW_DBS`; by default use the `lattice` and `exciton_db` outputs. See [Retrieved files and settings](../reference/retrieved-files.md)
+and [Analyse the databases with yambopy](yambopy-interface.md).
 
 ## Recover the Quantum ESPRESSO parent
 

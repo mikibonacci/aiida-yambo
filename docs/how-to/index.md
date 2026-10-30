@@ -23,6 +23,13 @@ Concise recipes for common operational tasks. They assume that the installation 
 
     [Resources and parallelism](resources.md)
 
+-   **Analyse the databases**
+
+    Use the lattice and the excitons of a BSE run in yambopy, from AiiDA nodes: the response function, the
+    exciton composition, and the raw files if you keep them.
+
+    [Yambopy interface](yambopy-interface.md)
+
 -   **Understand failures and restarts**
 
     What the restart layer does by itself, and what to check when a workflow stops.

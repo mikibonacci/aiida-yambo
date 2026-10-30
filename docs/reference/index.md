@@ -16,6 +16,13 @@ Use the reference pages when you already know which calculation you want to run 
 
     [Outputs reference](outputs.md)
 
+-   **Retrieved files and settings**
+
+    Which files are stored, which are retrieved temporarily, and the settings `KEEP_RAW_DBS`,
+    `STORE_EXCITON_EIGENVECTORS`, `N_EXCITON_EIGENVECTORS` and `ADDITIONAL_RETRIEVE_LIST`.
+
+    [Retrieved files](retrieved-files.md)
+
 -   **Options and exit codes**
 
     Less visible inputs (QP splitting, convergence settings, restart limits) and what each exit status means.

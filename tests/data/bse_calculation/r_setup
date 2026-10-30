@@ -1,0 +1,318 @@
+                                                                          
+                                                                          
+    Y88b    /   e           e    e      888~~\    ,88~-_                  
+     Y88b  /   d8b         d8b  d8b     888   |  d888   \                 
+      Y88b/   /Y88b       d888bdY88b    888 _/  88888    |                
+       Y8Y   /  Y88b     / Y88Y Y888b   888  \  88888    |                
+        Y   /____Y88b   /   YY   Y888b  888   |  Y888   /                 
+       /   /      Y88b /          Y888b 888__/    `88_-~                  
+                                                                          
+                                                                          
+    Version 5.3.0 Revision 23927 Hash (prev commit) 1730222ea             
+                          Branch is                                       
+            MPI+OpenMP+SLK+SLEPC+HDF5_MPI_IO Build                        
+                   http://www.yambo-code.eu                               
+ 
+ 10/30/2026 at 08:29 yambo @ corvina
+ ==================================================
+
+ Cores               :  1
+ Threads per core    :  1
+ Threads total       :  1
+ Nodes Computing     :  1
+ Nodes IO            :  1
+
+ Fragmented WFs      : yes
+ CORE databases      : .
+ Additional I/O      : .
+ Communications      : .
+ Input file          : (none)
+ Report file         : ./r_setup
+ Verbose log/report  : no
+ Log files           : ./LOG
+
+ Precision           : SINGLE
+  
+ [RD./SAVE//ns.db1]--------------------------------------------------------------
+  Bands                                            :   76
+  K-points                                         :  3
+  G-vectors                                        :   7823 [RL space]
+  Components                                       :   982 [wavefunctions]
+  Symmetries                                       :   48 [spatial+T-reV]
+  Spinor components                                :  1
+  Spin polarizations                               :  1
+  Temperature                                      :  0.000000 [eV]
+  Electrons                                        :  8.000000
+  WF G-vectors                                     :  1235
+  Max atoms/species                                :  2
+  No. of atom species                              :  1
+  Exact exchange fraction in XC                    :  0.000000
+  Exact exchange screening in XC                   :  0.000000
+  Magnetic symmetries                              : no
+ - S/N 003042 ---------------------------------------------- v.05.03.00 r.23927 -
+
+ [02] CORE Variables Setup
+ =========================
+
+
+  [02.01] Unit cells
+  ==================
+
+  Cell kind             :  FCC
+  Atoms in the cell     :  Si
+  number of Si atoms    :  2
+
+  List of atomic masses
+  Mass of Si    :  28.08500
+
+  List of atomic coordinates    : [cc]
+  Si1       :  0.000000  0.000000  0.000000  order 1
+  Si2       :  2.565303  2.565303  2.565303  order 2
+
+  Alat factors          :  5.130607  5.130607  5.130607 [a.u.]
+  Direct lattice volume :  270.1072 [a.u.]
+  Direct lattice vectors:  A[ 1 ]  A[ 2 ]  A[ 3 ]
+   A[ 1 ]:  0.000000  1.000000  1.000000  [iru]
+   0.000000  5.130607  5.130607  [cc]
+   A[ 2 ]:  1.000000  0.000000  1.000000  [iru]
+   5.130607  0.000000  5.130607  [cc]
+   A[ 3 ]:  1.000000  1.000000  0.000000  [iru]
+   5.130607  5.130607  0.000000  [cc]
+
+  Recip. lattice volume :  0.918340 [a.u.]
+  Recip. lattice vectors:  B[ 1 ]  B[ 2 ]  B[ 3 ]
+   B[ 1 ]: -0.500000  0.500000  0.500000  [iku]
+  -0.612324  0.612324  0.612324  [cc]
+   B[ 2 ]:  0.500000 -0.500000  0.500000  [iku]
+   0.612324 -0.612324  0.612324  [cc]
+   B[ 3 ]:  0.500000  0.500000 -0.500000  [iku]
+   0.612324  0.612324 -0.612324  [cc]
+   
+
+  [02.02] Symmetries
+  ==================
+
+  Inversion symmetry    : yes
+  Spatial inversion     : no
+  Inversion index       :  25
+  K-space Time-reversal : yes
+  Magnetic symmetries   : no
+  Time-reversal derived K-space symmetries:   25   48
+  Group table correct   : yes
+  Symmetries units      :  [cc]
+
+   [S  1]:   1.00000    -0.118308E-7 -0.118308E-7 -0.118308E-7   1.00000     0.118308E-7  0.118308E-7  0.118308E-7   1.00000   
+   [S  2]:  -1.00000     0.118308E-7 -0.118308E-7  0.118308E-7  -1.00000     0.118308E-7 -0.118308E-7 -0.118308E-7   1.00000   
+   [S  3]:  -1.00000    -0.118308E-7  0.118308E-7  0.118308E-7   1.00000    -0.118308E-7 -0.118308E-7  0.118308E-7  -1.00000   
+   [S  4]:   1.00000     0.118308E-7  0.118308E-7 -0.118308E-7  -1.00000    -0.118308E-7  0.118308E-7 -0.118308E-7  -1.00000   
+   [S  5]: -0.118308E-7 -0.118308E-7   1.00000      1.00000     0.118308E-7 -0.118308E-7  0.118308E-7   1.00000     0.118308E-7
+   [S  6]:  0.118308E-7 -0.118308E-7  -1.00000     -1.00000     0.118308E-7  0.118308E-7 -0.118308E-7   1.00000    -0.118308E-7
+   [S  7]: -0.118308E-7  0.118308E-7  -1.00000      1.00000    -0.118308E-7  0.118308E-7  0.118308E-7  -1.00000    -0.118308E-7
+   [S  8]:  0.118308E-7  0.118308E-7   1.00000     -1.00000    -0.118308E-7 -0.118308E-7 -0.118308E-7  -1.00000     0.118308E-7
+   [S  9]: -0.118308E-7   1.00000    -0.118308E-7  0.118308E-7 -0.118308E-7   1.00000      1.00000     0.118308E-7  0.118308E-7
+   [S 10]: -0.118308E-7  -1.00000     0.118308E-7  0.118308E-7  0.118308E-7  -1.00000      1.00000    -0.118308E-7 -0.118308E-7
+   [S 11]:  0.118308E-7  -1.00000    -0.118308E-7 -0.118308E-7  0.118308E-7   1.00000     -1.00000    -0.118308E-7  0.118308E-7
+   [S 12]:  0.118308E-7   1.00000     0.118308E-7 -0.118308E-7 -0.118308E-7  -1.00000     -1.00000     0.118308E-7 -0.118308E-7
+   [S 13]:  0.118308E-7  -1.00000    -0.118308E-7  -1.00000     0.118308E-7  0.118308E-7 -0.118308E-7 -0.118308E-7   1.00000   
+   [S 14]: -0.118308E-7   1.00000    -0.118308E-7   1.00000    -0.118308E-7  0.118308E-7  0.118308E-7  0.118308E-7   1.00000   
+   [S 15]:  0.118308E-7   1.00000     0.118308E-7  -1.00000    -0.118308E-7 -0.118308E-7 -0.118308E-7  0.118308E-7  -1.00000   
+   [S 16]: -0.118308E-7  -1.00000     0.118308E-7   1.00000     0.118308E-7 -0.118308E-7  0.118308E-7 -0.118308E-7  -1.00000   
+   [S 17]:  0.118308E-7 -0.118308E-7  -1.00000    -0.118308E-7   1.00000     0.118308E-7  -1.00000     0.118308E-7 -0.118308E-7
+   [S 18]: -0.118308E-7 -0.118308E-7   1.00000     0.118308E-7   1.00000    -0.118308E-7   1.00000     0.118308E-7  0.118308E-7
+   [S 19]:  0.118308E-7  0.118308E-7   1.00000    -0.118308E-7  -1.00000    -0.118308E-7  -1.00000    -0.118308E-7  0.118308E-7
+   [S 20]: -0.118308E-7  0.118308E-7  -1.00000     0.118308E-7  -1.00000     0.118308E-7   1.00000    -0.118308E-7 -0.118308E-7
+   [S 21]:   1.00000     0.118308E-7  0.118308E-7 -0.118308E-7 -0.118308E-7  -1.00000     0.118308E-7  -1.00000    -0.118308E-7
+   [S 22]:   1.00000    -0.118308E-7 -0.118308E-7 -0.118308E-7  0.118308E-7   1.00000     0.118308E-7   1.00000     0.118308E-7
+   [S 23]:  -1.00000     0.118308E-7 -0.118308E-7  0.118308E-7 -0.118308E-7   1.00000    -0.118308E-7  -1.00000     0.118308E-7
+   [S 24]:  -1.00000    -0.118308E-7  0.118308E-7  0.118308E-7  0.118308E-7  -1.00000    -0.118308E-7   1.00000    -0.118308E-7
+   [S*25]:  -1.00000     0.118308E-7  0.118308E-7  0.118308E-7  -1.00000    -0.118308E-7 -0.118308E-7 -0.118308E-7  -1.00000   
+   [S*26]:   1.00000    -0.118308E-7  0.118308E-7 -0.118308E-7   1.00000    -0.118308E-7  0.118308E-7  0.118308E-7  -1.00000   
+   [S*27]:   1.00000     0.118308E-7 -0.118308E-7 -0.118308E-7  -1.00000     0.118308E-7  0.118308E-7 -0.118308E-7   1.00000   
+   [S*28]:  -1.00000    -0.118308E-7 -0.118308E-7  0.118308E-7   1.00000     0.118308E-7 -0.118308E-7  0.118308E-7   1.00000   
+   [S*29]:  0.118308E-7  0.118308E-7  -1.00000     -1.00000    -0.118308E-7  0.118308E-7 -0.118308E-7  -1.00000    -0.118308E-7
+   [S*30]: -0.118308E-7  0.118308E-7   1.00000      1.00000    -0.118308E-7 -0.118308E-7  0.118308E-7  -1.00000     0.118308E-7
+   [S*31]:  0.118308E-7 -0.118308E-7   1.00000     -1.00000     0.118308E-7 -0.118308E-7 -0.118308E-7   1.00000     0.118308E-7
+   [S*32]: -0.118308E-7 -0.118308E-7  -1.00000      1.00000     0.118308E-7  0.118308E-7  0.118308E-7   1.00000    -0.118308E-7
+   [S*33]:  0.118308E-7  -1.00000     0.118308E-7 -0.118308E-7  0.118308E-7  -1.00000     -1.00000    -0.118308E-7 -0.118308E-7
+   [S*34]:  0.118308E-7   1.00000    -0.118308E-7 -0.118308E-7 -0.118308E-7   1.00000     -1.00000     0.118308E-7  0.118308E-7
+   [S*35]: -0.118308E-7   1.00000     0.118308E-7  0.118308E-7 -0.118308E-7  -1.00000      1.00000     0.118308E-7 -0.118308E-7
+   [S*36]: -0.118308E-7  -1.00000    -0.118308E-7  0.118308E-7  0.118308E-7   1.00000      1.00000    -0.118308E-7  0.118308E-7
+   [S*37]: -0.118308E-7   1.00000     0.118308E-7   1.00000    -0.118308E-7 -0.118308E-7  0.118308E-7  0.118308E-7  -1.00000   
+   [S*38]:  0.118308E-7  -1.00000     0.118308E-7  -1.00000     0.118308E-7 -0.118308E-7 -0.118308E-7 -0.118308E-7  -1.00000   
+   [S*39]: -0.118308E-7  -1.00000    -0.118308E-7   1.00000     0.118308E-7  0.118308E-7  0.118308E-7 -0.118308E-7   1.00000   
+   [S*40]:  0.118308E-7   1.00000    -0.118308E-7  -1.00000    -0.118308E-7  0.118308E-7 -0.118308E-7  0.118308E-7   1.00000   
+   [S*41]: -0.118308E-7  0.118308E-7   1.00000     0.118308E-7  -1.00000    -0.118308E-7   1.00000    -0.118308E-7  0.118308E-7
+   [S*42]:  0.118308E-7  0.118308E-7  -1.00000    -0.118308E-7  -1.00000     0.118308E-7  -1.00000    -0.118308E-7 -0.118308E-7
+   [S*43]: -0.118308E-7 -0.118308E-7  -1.00000     0.118308E-7   1.00000     0.118308E-7   1.00000     0.118308E-7 -0.118308E-7
+   [S*44]:  0.118308E-7 -0.118308E-7   1.00000    -0.118308E-7   1.00000    -0.118308E-7  -1.00000     0.118308E-7  0.118308E-7
+   [S*45]:  -1.00000    -0.118308E-7 -0.118308E-7  0.118308E-7  0.118308E-7   1.00000    -0.118308E-7   1.00000     0.118308E-7
+   [S*46]:  -1.00000     0.118308E-7  0.118308E-7  0.118308E-7 -0.118308E-7  -1.00000    -0.118308E-7  -1.00000    -0.118308E-7
+   [S*47]:   1.00000    -0.118308E-7  0.118308E-7 -0.118308E-7  0.118308E-7  -1.00000     0.118308E-7   1.00000    -0.118308E-7
+   [S*48]:   1.00000     0.118308E-7 -0.118308E-7 -0.118308E-7 -0.118308E-7   1.00000     0.118308E-7  -1.00000     0.118308E-7
+
+  [02.03] Reciprocal space
+  ========================
+
+  nG shells         :  130
+  nG charge         :   7823
+  nG WFs            :  1235
+  nC WFs            :   982
+  G-vecs. in first 13 shells:  [ Number ]
+     1    9   15   27   51   59   65   89  113
+   137  169  181  229
+  ...
+  Shell energy in first 13 shells:  [ mHa ]
+    0.00000      562.411      749.881      1499.76      2062.17      2249.64      2999.52      3561.93      3749.40   
+    4499.29      5061.70      5999.05      6561.46   
+  ...
+
+  [02.04] K-grid lattice
+  ======================
+
+  Compatible Grid is   : 3D
+  Base K vectors       :  K_min[ 1 ]  K_min[ 2 ]  K_min[ 3 ]
+  K_min[ 1 ] : -0.500000     0.162985E-8 -0.210142E-8 [rlu]
+  K_min[ 2 ] : -0.162985E-8 -0.162985E-8 -0.500000    [rlu]
+  K_min[ 3 ] :  0.162985E-8 -0.500000    -0.210142E-8 [rlu]
+  Grid dimensions      :  2  2  2
+  K lattice UC volume  :  0.114792 [a.u.]
+
+  IBZ K-points                                      :  3
+  BZ  K-points                                      :   8
+
+  K/Q-points units:
+  rlu = crystal or reduced units; cc = cartesian coordinates; iku = interal k-units
+
+  K [1]          [rlu]:  0.000000  0.000000  0.000000
+         WF components:   965
+  K [2]          [rlu]: -0.162985E-8 -0.162985E-8 -0.500000   
+         WF components:   978
+  K [3]          [rlu]:  0.420284E-8 -0.500000    -0.500000   
+         WF components:   982
+
+  [02.05] Energies & Occupations
+  ==============================
+
+  [X] === General ===
+  [X] Electronic Temperature                        :  0.000000  0.000000 [eV K]
+  [X] Bosonic    Temperature                        :  0.000000  0.000000 [eV K]
+  [X] Finite Temperature mode                       : no
+  [X] El. density                                   :  0.19987E+24 [cm-3]
+  [X] Fermi Level                                   :  6.534084 [eV]
+
+  [X] === Gaps and Widths ===
+  [X] Conduction Band Min                           :  0.595318 [eV]
+  [X] Valence Band Max                              :  0.000000 [eV]
+  [X] Filled Bands                                  :   4
+  [X] Empty Bands                                   :    5   76
+  [X] Direct Gap                                    :  2.433804 [eV]
+  [X] Direct Gap localized at k                     :  1
+  [X] Indirect Gap                                  :  0.595318 [eV]
+  [X] Indirect Gap between kpts                     :  1  3
+  [X] Last valence band width                       :  2.922143 [eV]
+  [X] 1st conduction band width                     :  1.838486 [eV]
+   
+   
+  E @ K [1]:  [eV]
+  -12.02374   0.00000   0.00000   0.00000   2.43380   2.43380   2.43380   3.36377
+  occ @ K [1]
+   2.000000  2.000000  2.000000  2.000000  0.000000  0.000000  0.000000  0.000000
+  E @ K [2]:  [eV]
+  -9.672912 -7.044745 -1.231238 -1.231238  1.485058  3.199128  3.199128  7.646071
+  occ @ K [2]
+   2.000000  2.000000  2.000000  2.000000  0.000000  0.000000  0.000000  0.000000
+  E @ K [3]:  [eV]
+   -7.85817  -7.85817  -2.92214  -2.92214   0.59532   0.59532  10.03516  10.03516
+  occ @ K [3]
+   2.000000  2.000000  2.000000  2.000000  0.000000  0.000000  0.000000  0.000000
+
+ [03] Transferred momenta grid and indexing
+ ==========================================
+
+
+ IBZ Q-points                                      :  3
+ BZ  Q-points                                      :   8
+
+ K/Q-points units:
+ rlu = crystal or reduced units; cc = cartesian coordinates; iku = interal k-units
+
+ Q [1]          [rlu]:  0.000000  0.000000  0.000000
+ Q [2]          [rlu]: -0.162985E-8 -0.162985E-8 -0.500000   
+ Q [3]          [rlu]:  0.420284E-8 -0.500000    -0.500000   
+
+  [03.01] X indexes
+  =================
+
+
+   [03.01.01] Sigma indexes
+   ========================
+
+   [WR./SAVE//ndb.kindx]-----------------------------------------------------------
+    Fragmentation                                    : no
+    Polarization last K ( bz)                        :   8
+    Polarization last K (ibz)                        :  3
+    QP states                                        :  1  3
+    X grid is uniform                                : yes
+    Grids (string)                                   :  X S
+    Grids (int-vector)                               :  1  0  0  1
+   - S/N 003042 ---------------------------------------------- v.05.03.00 r.23927 -
+
+ [04] Timing Overview
+ ====================
+
+ Clock: global
+      io_ATMPROJ_pwscf :      0.0000s CPU
+            io_DIPOLES :      0.0000s CPU
+            io_COL_CUT :      0.0000s CPU
+          io_KB_abinit :      0.0000s CPU
+                 io_HF :      0.0000s CPU
+        io_Double_Grid :      0.0001s CPU (2 calls,   0.029 msec avg)
+                 io_WF :      0.0048s CPU
+              io_QINDX :      0.0053s CPU (3 calls,   1.760 msec avg)
+           io_KB_pwscf :      0.0054s CPU
+               io_GROT :      0.0054s CPU (3 calls,   1.797 msec avg)
+       bz_samp_indexes :      0.0075s CPU
+
+ [05] Memory Overview
+ ====================
+
+ Memory Usage: global (Only MASTER cpu here). [O] stands for group 'O'
+ Memory treshold are: 51.20000 [Mb] (basic treshold)  512.0000 [Mb] (SAVEs treshold)
+
+
+         Max memory used   :  1.858000 [Mb]
+
+ [06] Game Over & Game summary
+ =============================
+
+ 10/30/2026 at 08:29 yambo @ corvina [start]
+ 10/30/2026 at 08:29                 [end]
+
+  
+ .-ACKNOWLEDGMENT
+ |
+ | The users of YAMBO have little formal obligations with respect to
+ | the YAMBO group (those specified in the GNU General Public
+ | License, http://www.gnu.org/copyleft/gpl.txt). However, it is
+ | common practice in the scientific literature, to acknowledge the
+ | efforts of people that have made the research possible. In this
+ | spirit, please find below the reference we kindly ask you to use
+ | in order to acknowledge YAMBO
+ |
+ | Many-body perturbation theory calculations using the yambo code
+ | D. Sangalli, A. Ferretti, H. Miranda, C. Attaccalite, I. Marri, E. Cannuccia, P. Melo,
+ | M Marsili, F Paleari, A Marrazzo, G Prandini, P Bonfà, M O Atambo, F Affinito,
+ | M Palummo, A Molina-Sánchez, C Hogan, M Grüning, D Varsano and A Marini.
+ | J. Phys.: Condens. Matter 31, 325902 (2019).
+ |
+ | Yambo: An ab initio tool for excited state calculations
+ | A. Marini, C. Hogan, M. Grüning, D. Varsano
+ | Computer Physics Communications 180, 1392 (2009).
+ |
+  
+ .-Input file  (none)
+ | BoseTemp= 0.000000         eV    # Bosonic Temperature
+ | #DegFix                        # Force the code to impose the energy levels to respect their degeneracy
+ | K_grids= " X S"                  # [KPT] Select the grids (X=response, S=sigma, C=collisions, B=bse) [default X S C B]
+ | %QptCoord                        # [KPT] [iku] Q-points coordinates (compatibility)
+ | %

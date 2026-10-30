@@ -66,6 +66,10 @@ pre-commit = [
 "yambo.yambo" = "aiida_yambo.calculations.yambo:YamboCalculation"
 "yambo.ypp" = "aiida_yambo.calculations.ypp:YppCalculation"
 
+[project.entry-points."aiida.data"]
+"yambo.lattice" = "aiida_yambo.data.databases:YamboLatticeData"
+"yambo.exciton" = "aiida_yambo.data.databases:YamboExcitonData"
+
 [project.entry-points."aiida.parsers"]
 "yambo.yambo" = "aiida_yambo.parsers.parsers:YamboParser"
 "yambo.ypp" = "aiida_yambo.parsers.yppparser:YppParser"

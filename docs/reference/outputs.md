@@ -8,6 +8,8 @@ Common workflow outputs include:
 | `array_ndb` | Arrays parsed from YAMBO databases such as QP corrections |
 | `bands_quasiparticle` | Quasiparticle band structure |
 | `array_chi` | BSE absorption/loss spectrum arrays |
+| `lattice` | `YamboLatticeData` (from `ns.db1`), for yambopy: [Yambopy interface](../how-to/yambopy-interface.md) |
+| `exciton_db.Q1`, ... | `YamboExcitonData` (from `ndb.BS_diago_Q*`), one for each Q point of a BSE calculation |
 | `collection` | `YamboConvergence`: `story` (one record per calculation: variables, parsed quantities, `failed`, `useful`, `converged`) and the `workflows` pks/uuids |
 | `convergence_summary` | `YamboConvergence`: converged values and details for each parameter group (or `scan` details for a scan) |
 

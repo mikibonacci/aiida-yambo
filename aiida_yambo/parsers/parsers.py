@@ -3,6 +3,7 @@
 import copy
 import os
 import pathlib
+import shutil
 import tempfile
 
 import numpy
@@ -16,7 +17,8 @@ from aiida.parsers.parser import Parser
 from aiida.plugins import DataFactory
 from aiida_quantumespresso.calculations import _uppercase_dict
 
-from aiida_yambo.parsers.utils import parse_BS, parse_log, parse_report, parse_scheduler_stderr, yambo_wrote_dbs
+from aiida_yambo.data import YamboExcitonData, YamboLatticeData
+from aiida_yambo.parsers.utils import BS_arrays, parse_log, read_BS, parse_report, parse_scheduler_stderr, yambo_wrote_dbs
 from aiida_yambo.utils.common_helpers import find_pw_parent, take_calc_from_remote
 
 SingleFileData = DataFactory('core.singlefile')
@@ -98,6 +100,8 @@ class YamboParser(Parser):
         self._quasiparticle_bands_linkname = 'bands_quasiparticle'
         self._parameter_linkname = 'output_parameters'
         self._system_info_linkname = 'system_info'
+        self._lattice_linkname = 'lattice'
+        self._exciton_db_linkname = 'exciton_db'
         super(YamboParser, self).__init__(calculation)
 
     def parse(self, retrieved, **kwargs):
@@ -122,6 +126,8 @@ class YamboParser(Parser):
 
         initialise = settings_dict.pop('INITIALISE', None)
         verbose_timing = settings_dict.pop('T_VERBOSE', False)
+        store_eigenvectors = settings_dict.pop('STORE_EXCITON_EIGENVECTORS', False)
+        number_of_eigenvectors = settings_dict.pop('N_EXCITON_EIGENVECTORS', None)
             
         # select the folder object
         try:
@@ -155,6 +161,8 @@ class YamboParser(Parser):
         ndbqp = {}
         ndbhf = {}
         q = None
+        lattice_node = None
+        exciton_nodes = {}
         chi = {}
         excitonic_states = {}
 
@@ -167,8 +175,18 @@ class YamboParser(Parser):
                 with retrieved.open(filename, 'rb') as handle:
                     temp_file.write_bytes(handle.read())
 
+            # the databases which are not kept in the retrieved folder (see the settings KEEP_RAW_DBS)
+            temporary_folder = kwargs.get('retrieved_temporary_folder')
+            if temporary_folder:
+                for filename in os.listdir(temporary_folder):
+                    shutil.copy(os.path.join(temporary_folder, filename), dirpath)
+
             if 'ns.db1' in os.listdir(dirpath):
                 output_params['ns_db1_path'] = dirpath
+                try:
+                    lattice_node = YamboLatticeData.from_netcdf(os.path.join(dirpath, 'ns.db1'))
+                except Exception as error:  # a lattice which yambopy cannot read does not make the calculation fail
+                    output_params['warnings'].append(f'the lattice (ns.db1) could not be read: {error}')
 
             for filename in os.listdir(dirpath):
                 
@@ -176,10 +194,12 @@ class YamboParser(Parser):
                     with retrieved.open(filename) as stderr:
                         parse_scheduler_stderr(stderr, output_params)
                 
-                elif 'ndb.BS_diago' in filename: #BSE in AiiDA 2.x still not supported
-                    q, chi, excitonic_states = parse_BS(dirpath+'/',
-                                                                filename,
-                                                                output_params['ns_db1_path'])            
+                elif 'ndb.BS_diago' in filename:
+                    q, exciton_db = read_BS(dirpath+'/', filename, output_params['ns_db1_path'],
+                                            load_eigenvectors=bool(store_eigenvectors))
+                    chi, excitonic_states = BS_arrays(exciton_db)
+                    exciton_nodes[q] = YamboExcitonData.from_yambopy(
+                        exciton_db, store_eigenvectors=bool(store_eigenvectors), neigs=number_of_eigenvectors)
             
             try:
                 results = YamboFolder(dirpath)
@@ -288,6 +308,12 @@ class YamboParser(Parser):
                 if ndbhf:
                     self.out(self._ndb_HF_linkname,self._aiida_ndb_hf(ndbhf))
             
+            if lattice_node is not None:
+                self.out(self._lattice_linkname, lattice_node)
+
+            for q_label, exciton_node in exciton_nodes.items():
+                self.out(f'{self._exciton_db_linkname}.{q_label}', exciton_node)
+
             if chi:  #
                 self.out(self._ndb_CHI_linkname,self._aiida_array(chi))
             

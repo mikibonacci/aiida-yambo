@@ -1,0 +1,101 @@
+
+
+
+_|      _|   _|_|   _|      _|  _|_|_|     _|_|
+  _|  _|   _|    _| _|_|  _|_| _|    _| _|    _|
+    _|     _|_|_|_| _|  _|  _| _|_|_|   _|    _|
+    _|     _|    _| _|      _| _|    _| _|    _|
+    _|     _|    _| _|      _| _|_|_|     _|_|
+
+
+
+ <---> [01] MPI/OPENMP structure, Files & I/O Directories
+ <---> [02] CORE Variables Setup
+ <---> [02.01] Unit cells
+ <---> [02.02] Symmetries
+ <---> [02.03] Reciprocal space
+ <---> [02.04] K-grid lattice
+ <---> Grid dimensions      :  2  2  2
+ <---> [02.05] Energies & Occupations
+ <---> [03] Transferred momenta grid and indexing
+ <---> [BZ sampling] Q-grid is User defined and/or read from the database
+ <---> [03.01] X + BSE indexes
+ <---> X + BSE [eval] |                                        | [000%] --(E) --(X)
+ <---> X + BSE [eval] |########################################| [100%] --(E) --(X)
+ <---> X + BSE[REDUX] |                                        | [000%] --(E) --(X)
+ <---> X + BSE[REDUX] |########################################| [100%] --(E) --(X)
+ <---> [03.01.01] Sigma indexes
+ <---> Sigma [eval] |                                        | [000%] --(E) --(X)
+ <---> Sigma [eval] |########################################| [100%] --(E) --(X)
+ <---> Sigma[REDUX] |                                        | [000%] --(E) --(X)
+ <---> Sigma[REDUX] |########################################| [100%] --(E) --(X)
+ <---> [WARNING] [Xs] User bands 1-75 break level degeneracy
+ <---> [WARNING] [BS] User bands 4-5 break level degeneracy
+ <---> [04] External/Internal QP corrections
+ <---> [QP_apply] Action to be applied: USER defined scissor
+ <---> [04.01]  QP corrections report
+ <---> [05] Dipoles
+ <---> [05.01] Setup: observables and procedures
+ <---> [DIP] Database not correct or missing. To be computed
+ <---> [x,Vnl] computed using 36 projectors
+ <---> R V P [g-space] |                                        | [000%] --(E) --(X)
+ <---> R V P [g-space] |########################################| [100%] --(E) --(X)
+ <---> [WARNING] [r,Vnl^pseudo] included in position and velocity dipoles.
+ <---> [WARNING] In case H contains other non local terms, these are neglected
+ <---> [06] Static Dielectric Matrix
+ <---> [LA] SERIAL linear algebra
+ <---> [FFT-X] Mesh size:  12  12  12
+ <---> [X-CG] R(p) Tot o/o(of R):   282  2272   100
+ <---> [X] Upper matrix triangle filled
+ <---> Xo@q[1] |                                        | [000%] --(E) --(X)
+ <---> Xo@q[1] |########################################| [100%] --(E) --(X)
+ <---> X@q[1] |                                        | [000%] --(E) --(X)
+ <---> X@q[1] |########################################| [100%] --(E) --(X)
+ <---> [X-CG] R(p) Tot o/o(of R):   398  2272   100
+ <---> Xo@q[2] |                                        | [000%] --(E) --(X)
+ <---> Xo@q[2] |########################################| [100%] --(E) --(X)
+ <---> X@q[2] |                                        | [000%] --(E) --(X)
+ <---> X@q[2] |########################################| [100%] --(E) --(X)
+ <---> [X-CG] R(p) Tot o/o(of R):   354  2272   100
+ <---> Xo@q[3] |                                        | [000%] --(E) --(X)
+ <---> Xo@q[3] |########################################| [100%] --(E) --(X)
+ <---> X@q[3] |                                        | [000%] --(E) --(X)
+ <---> X@q[3] |########################################| [100%] --(E) --(X)
+ <---> [07] Bethe Salpeter Equation driver
+ <---> [07.01] Bethe Salpeter Equation @q1
+ <---> [07.01.01] Transition pre-analysis @q1
+ <---> [07.01.02] Transition Groups build-up @q1
+ <---> [BSK] Size (resonant):   8
+ <---> [BSK]         (total):   8
+ <---> [BSK] N. of matrices :  1
+ <---> [07.01.03] Loading Dipoles @q1
+ <---> BSE dipoles |                                        | [000%] --(E) --(X)
+ <---> BSE dipoles |########################################| [100%] --(E) --(X)
+ <---> [07.01.04] Independent Particles properties @q1
+ <---> IP properties |                                        | [000%] --(E) --(X)
+ <---> IP properties |########################################| [100%] --(E) --(X)
+ <--->  EPS via KK, poles at w>0 reflected also in w<0
+ <---> [07.01.05] BSE Kernel @q1 (Resonant CORRRELATION EXCHANGE)
+ <---> [07.01.05.01] Screened interaction header I/O
+ <---> [07.01.05.02] Main kernel loop
+ <---> Kernel exch |                                        | [000%] --(E) --(X)
+ <---> Kernel exch |########################################| [100%] --(E) --(X)
+ <---> [FFT-BSK-3] Mesh size:  12  12  12
+ <---> [07.01.05.03] Wave-Function Phases
+ <---> Kernel corr |                                        | [000%] --(E) --(X)
+ <---> Kernel corr |########################################| [100%] --(E) --(X)
+ <---> [07.01.06] BSE solver(s) @q1
+ <---> [LA] SERIAL linear algebra
+ <---> [07.01.07] Diago Solver @q1
+ <---> Unfolding BSE components |                                        | [000%] --(E) --(X)
+ <---> Unfolding BSE components |########################################| [100%] --(E) --(X)
+ <---> BSK diagonalize |                                        | [000%] --(E) --(X)
+ <---> BSK diagonalize |########################################| [100%] --(E) --(X)
+ <---> opt1 residuals |                                        | [000%] --(E) --(X)
+ <---> opt1 residuals |########################################| [100%] --(E) --(X)
+ <---> BSK resp. funct |                                        | [000%] --(E) --(X)
+ <---> BSK resp. funct |########################################| [100%] --(E) --(X)
+ <--->  EPS via KK, poles at w>0 reflected also in w<0
+ <---> [08] Timing Overview
+ <---> [09] Memory Overview
+ <---> [10] Game Over & Game summary

@@ -12,6 +12,7 @@ from aiida.orm import ArrayData, Code, List, RemoteData, load_node
 from aiida.orm.nodes import Dict
 from aiida.plugins import CalculationFactory, DataFactory
 
+from aiida_yambo.calculations.yambo import additional_retrieve_entries
 from aiida_yambo.utils.common_helpers import take_calc_from_remote
 
 PwCalculation = CalculationFactory('quantumespresso.pw')
@@ -325,9 +326,7 @@ class YppCalculation(CalcJob):
             if sort_excitons:
                 calcinfo.retrieve_list.append('*sorted*')
         
-        additional = settings.pop('ADDITIONAL_RETRIEVE_LIST',[])
-        if additional:
-            extra_retrieved.append(additional)
+        extra_retrieved.extend(additional_retrieve_entries(settings.pop('ADDITIONAL_RETRIEVE_LIST', [])))
 
         from aiida.common.datastructures import CodeRunMode, CodeInfo
 

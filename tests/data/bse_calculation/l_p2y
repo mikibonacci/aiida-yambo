@@ -1,0 +1,49 @@
+
+
+ ___ __  _____  __ __  _____   _____
+|   Y  ||  _  ||  Y  ||  _  \ |  _  |
+|   |  ||. |  ||.    ||. |  / |. |  |
+ \_  _/ |. _  ||.\_/ ||. _  \ |. |  |
+  |: |  |: |  ||: |  ||: |   \|: |  |
+  |::|  |:.|:.||:.|:.||::.   /|::.  |
+  `--"  `-- --"`-- --"`-----" `-----"
+
+
+ <---> DBs path set to : .
+ <---> detected QE data format : qexsd
+ <---> == PWscf v.6.x generated data (QEXSD fmt) ==
+ <---> Header/K-points/Energies...
+ <---> Cell data...
+ <---> [WARNING] Two or more crystal structures fit the given cell
+ <---> Atomic data...
+ <---> Symmetries...
+ <---> XC functional...Perdew, Burke & Ernzerhof(X)+Perdew, Burke & Ernzerhof(C)
+ <---> EXX fraction...:  0.000000
+ <---> EXX screening...:  0.000000
+ <---> K-points mesh...
+ <---> RL vectors...
+ <---> IGK arrays...
+ <---> Energies...
+ <--->  Electrons             :  8.000000
+ <--->  Temperature           :  0.000000 [eV]
+ <--->  Lattice factors       :  5.130607  5.130607  5.130607 [a.u.]
+ <--->  K-points              :  3
+ <--->  Bands                 :   76
+ <--->  Spinor components     :  1
+ <--->  Spin polarizations    :  1
+ <--->  Spin orbit coupling    : no
+ <--->  Symmetries   [spatial]:  24
+ <--->                 [T-rev] : yes
+ <--->  Max WF components     :   982
+ <--->  RL vectors        (WF):  1235
+ <--->  RL vectors    (CHARGE):   7823
+ <--->  XC potential           : Perdew, Burke & Ernzerhof(X)+Perdew, Burke & Ernzerhof(C)
+ <--->  Atomic species        :  1
+ <--->  Max atoms/species     :  2
+ <---> == DB1 (Gvecs and more) ...
+ <---> ... Database done
+ <---> == DB2 (wavefunctions)  ...
+ <---> [p2y] WF I/O |                                        | [000%] --(E) --(X)
+ <---> [p2y] WF I/O |########################################| [100%] --(E) --(X)
+ <---> == DB3 (PseudoPotential) ...
+ <--->  == P2Y completed ==

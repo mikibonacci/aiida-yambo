@@ -83,6 +83,7 @@ nav:
       - Overview: how-to/index.md
       - Split the GW calculation (QP splitter): how-to/qp-splitter.md
       - Resources and parallelism: how-to/resources.md
+      - Analyse the databases with yambopy: how-to/yambopy-interface.md
       - Scan values and choose fits: how-to/convergence-scan-and-fits.md
       - Restarts and troubleshooting: how-to/restarts-and-troubleshooting.md
       - Recipes: how-to/recipes.md
@@ -96,5 +97,6 @@ nav:
       - Workflows: reference/workflows.md
       - Outputs and parsed quantities: reference/outputs.md
       - Options and exit codes: reference/options-and-exit-codes.md
+      - Retrieved files and settings: reference/retrieved-files.md
       - Internal calculation layers: reference/internal-layers.md
       - Changelog: https://github.com/yambo-code/yambo-aiida/releases

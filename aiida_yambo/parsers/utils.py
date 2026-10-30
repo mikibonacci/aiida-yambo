@@ -278,21 +278,34 @@ def _exciton_db_without_table(filename, folder, lattice):
         spin_pol='pol' if spin_vars == [2, 1] else 'no', Lkind=Lkind)
 
 
-def parse_BS(folder,filename, save_dir):
+def read_BS(folder, filename, save_dir, load_eigenvectors=False):
+    """The `YamboExcitonDB` of `folder/filename` (`ndb.BS_diago_Q*`), with the lattice read from `save_dir/ns.db1`.
+
+    Returns the label of the Q point (e.g. 'Q1') and the exciton database. The eigenvectors are read (they can be
+    large) only if `load_eigenvectors`.
+    """
     q = filename[13:]
     lat  = YamboLatticeDB.from_db_file(filename=save_dir+'/ns.db1')
     try:
-        ydb  = YamboExcitonDB.from_db_file(filename=filename,folder=folder,lattice=lat)
+        ydb  = YamboExcitonDB.from_db_file(filename=filename,folder=folder,lattice=lat,Load_WF=load_eigenvectors)
     except KeyError as error:
         if error.args != ('BS_TABLE',):
             raise
         ydb = _exciton_db_without_table(filename, folder, lat)
+    return q, ydb
+
+
+def BS_arrays(ydb):
+    """The response function and the excitons (energies, intensities) of a `YamboExcitonDB`, as dictionaries of arrays."""
     chi = ydb.get_chi(emin=0, emax=20, estep=0.01, broad=0.15,)
     chi_ = {'eV':chi[0],'eps_2':chi[1].imag,'eps_1':chi[1].real}
-    
+
     excitons = {'energies':ydb.eigenvalues.real,
                'intensities':ydb.get_intensities().real}
-    
-    
-    
+    return chi_, excitons
+
+
+def parse_BS(folder,filename, save_dir):
+    q, ydb = read_BS(folder, filename, save_dir)
+    chi_, excitons = BS_arrays(ydb)
     return q, chi_, excitons
