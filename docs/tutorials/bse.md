@@ -62,6 +62,12 @@ manager.set_QP_subsets_dict(qp_per_subset=8, parallel_runs=1,
                             explicit=[[1, 1, 1, 2], [1, 1, 2, 2]])
 ```
 
+!!! tip "More on the QP splitter"
+    The QP selection (`boundaries`, `range_QP`, `explicit`, `consider_only`), the resources and the walltime of the
+    splitted runs, `parallelism='auto'`, the cleaning of the splitted folders and `extend_db` are explained in the
+    how-to [Split the GW calculation (QP splitter)](../how-to/qp-splitter.md). The complete list of the
+    `QP_subsets_dict` keys is in [Options and exit codes](../reference/options-and-exit-codes.md#qp_subsets_dict).
+
 The resulting spectrum is available through `run.outputs.array_chi`, while requested exciton values are in `output_ywfl_parameters`.
 
 For a first check, inspect the energy grid and imaginary dielectric function:

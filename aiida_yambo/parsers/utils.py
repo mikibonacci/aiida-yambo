@@ -38,15 +38,15 @@ def yambotiming_to_seconds(yt):
         return yt
 
 
-errors = {'memory_error':['\[ERROR\]Allocation','\[ERROR\] Allocation', '\[ERROR\]out of memory', '\[ERROR\] out of memory', '\[MEMORY\] Alloc','\[MEMORY\]Alloc'],
+errors = {'memory_error':['\\[ERROR\\]Allocation','\\[ERROR\\] Allocation', '\\[ERROR\\]out of memory', '\\[ERROR\\] out of memory', '\\[MEMORY\\] Alloc','\\[MEMORY\\]Alloc'],
           'time_most_prob':['Alloc Xo%blc_d',],
-          'para_error':['\[ERROR\]Incomplete','\[ERROR\]Impossible','\[ERROR\]USER parallel',
-                         '\[NULL\]','\[ERROR\] Incomplete','\[ERROR\] Impossible','\[ERROR\] USER parallel',
+          'para_error':['\\[ERROR\\]Incomplete','\\[ERROR\\]Impossible','\\[ERROR\\]USER parallel',
+                         '\\[NULL\\]','\\[ERROR\\] Incomplete','\\[ERROR\\] Impossible','\\[ERROR\\] USER parallel',
                         
                         ],
                             
 
-          'X_par_allocation':['\[ERROR\]Allocation of X_par%blc_d failed'],
+          'X_par_allocation':['\\[ERROR\\]Allocation of X_par%blc_d failed'],
           
          }
 
@@ -85,9 +85,9 @@ def parse_log(log,output_params,timing):
             else:
                 output_params['game_over'] = False
         #timing sections...
-        timing_new = re.compile('^\s+?<([0-9a-z-]+)> ([A-Z0-9a-z-]+)[:] \[([0-9]+)\] [A-Za-z\s]+')
-        timing_old = re.compile('^\s+?<([0-9a-z-]+)> \[([0-9]+)\] [A-Za-z\s]+')
-        timing_bugs = re.compile('\[([0-9]+)\] [A-Za-z\s]+')
+        timing_new = re.compile('^\\s+?<([0-9a-z-]+)> ([A-Z0-9a-z-]+)[:] \\[([0-9]+)\\] [A-Za-z\\s]+')
+        timing_old = re.compile('^\\s+?<([0-9a-z-]+)> \\[([0-9]+)\\] [A-Za-z\\s]+')
+        timing_bugs = re.compile('\\[([0-9]+)\\] [A-Za-z\\s]+')
         #if output_params['timing'] == []:
         for line in log.lines:
             if timing_bugs.findall(line):
@@ -112,8 +112,8 @@ def parse_log(log,output_params,timing):
         
         if timing:
             output_params['timing'].append('verbose_output:')
-            t_verbose = re.compile('^\s+?<([0-9a-z-]+)> ([A-Z0-9a-z-]+)[:] (\[TIMING\])')
-            t_verbose_old = re.compile('^\s+?<([0-9a-z-]+)> (\[TIMING\]) ')
+            t_verbose = re.compile('^\\s+?<([0-9a-z-]+)> ([A-Z0-9a-z-]+)[:] (\\[TIMING\\])')
+            t_verbose_old = re.compile('^\\s+?<([0-9a-z-]+)> (\\[TIMING\\]) ')
             for line in log.lines:
                 if t_verbose.match(line):
                     output_params['timing'].append(t_verbose.match(line).string)
@@ -121,24 +121,24 @@ def parse_log(log,output_params,timing):
                     output_params['timing'].append(t_verbose_old.match(line).string)
                     
         #warnings
-        warning = re.compile('\[WARNING\]')      
+        warning = re.compile('\\[WARNING\\]')      
         #memstats...
-        memory = re.compile('^\s+?<([0-9a-z-]+)> ([A-Z0-9a-z-]+)[:] (\[MEMORY\]) ')
-        memory_old = re.compile('^\s+?<([0-9a-z-]+)> (\[MEMORY\]) ')
-        alloc1_error = re.compile('\[ERROR\]Allocation')
-        alloc2_error = re.compile('\[MEMORY\] Alloc')
-        alloc3_error = re.compile('\[MEMORY\]out of memory')
-        alloc4_error = re.compile('\[MEMORY\] out of memory')
-        incomplete_para_error = re.compile('\[ERROR\]Incomplete')
-        impossible_para_error = re.compile('\[ERROR\]Impossible')
-        impossible_para_error2 = re.compile('\[ERROR\]USER parallel')
-        incomplete_para_error_ = re.compile('\[ERROR\] Incomplete')
-        impossible_para_error_ = re.compile('\[ERROR\] Impossible')
-        impossible_para_error2_ = re.compile('\[ERROR\] USER parallel')
-        corrupted_fragment = re.compile('\[ERROR\] Writing File')
+        memory = re.compile('^\\s+?<([0-9a-z-]+)> ([A-Z0-9a-z-]+)[:] (\\[MEMORY\\]) ')
+        memory_old = re.compile('^\\s+?<([0-9a-z-]+)> (\\[MEMORY\\]) ')
+        alloc1_error = re.compile('\\[ERROR\\]Allocation')
+        alloc2_error = re.compile('\\[MEMORY\\] Alloc')
+        alloc3_error = re.compile('\\[MEMORY\\]out of memory')
+        alloc4_error = re.compile('\\[MEMORY\\] out of memory')
+        incomplete_para_error = re.compile('\\[ERROR\\]Incomplete')
+        impossible_para_error = re.compile('\\[ERROR\\]Impossible')
+        impossible_para_error2 = re.compile('\\[ERROR\\]USER parallel')
+        incomplete_para_error_ = re.compile('\\[ERROR\\] Incomplete')
+        impossible_para_error_ = re.compile('\\[ERROR\\] Impossible')
+        impossible_para_error2_ = re.compile('\\[ERROR\\] USER parallel')
+        corrupted_fragment = re.compile('\\[ERROR\\] Writing File')
         time_probably = re.compile('Alloc Xo%blc_d')
-        X_par_mem = re.compile('\[ERROR\]Allocation of X_par%blc_d failed')
-        X_par_mem_ = re.compile('\[ERROR\] Allocation of X_par%blc_d failed')
+        X_par_mem = re.compile('\\[ERROR\\]Allocation of X_par%blc_d failed')
+        X_par_mem_ = re.compile('\\[ERROR\\] Allocation of X_par%blc_d failed')
         reading_explosion_of_memory = re.compile('Reading')
         for line in log.lines:
             if warning.match(line):

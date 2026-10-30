@@ -49,10 +49,10 @@ class YppCalculation(CalcJob):
 
         spec.input('metadata.options.logostring', valid_type=six.string_types, default="""
 #
-# Y88b    /   e           e    e      888~~\    ,88~-_
+# Y88b    /   e           e    e      888~~\\    ,88~-_
 #  Y88b  /   d8b         d8b  d8b     888   |  d888   \
 #   Y88b/   /Y88b       d888bdY88b    888 _/  88888    |
-#    Y8Y   /  Y88b     / Y88Y Y888b   888  \  88888    |
+#    Y8Y   /  Y88b     / Y88Y Y888b   888  \\  88888    |
 #     Y   /____Y88b   /   YY   Y888b  888   |  Y888   /
 #    /   /      Y88b /          Y888b 888__/    `88_-~
 #
